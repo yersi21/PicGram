@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "877117010993",
+    "project_id": "picgram-fb4c4",
+    "storage_bucket": "picgram-fb4c4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:877117010993:android:e8baf1229f5e90f7bc9110",
+        "android_client_info": {
+          "package_name": "com.example.picgram"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCuG3lm-RaxwJDi8pNHOUaR7HpFbW8eGCY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
