@@ -1,4 +1,4 @@
-﻿package com.example.picgram
+package com.example.picgram
 
 import android.content.Intent
 import android.os.Bundle
@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -225,7 +226,11 @@ fun FeedScreen(
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
                         items(posts, key = { it.id }) { post ->
-                            PostCard(post = post)
+                            PostCard(
+                                post = post,
+                                currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: "",
+                                db = db
+                            )
                         }
                     }
                 }
@@ -237,11 +242,43 @@ fun FeedScreen(
 /**
  * Tarjeta que representa una publicacion individual en el feed.
  * Muestra: avatar con iniciales, username, timestamp, imagen (si existe) y caption.
+ * Si el usuario autenticado es el dueno del post, muestra un boton de eliminar.
  *
- * @param post Datos de la publicacion a renderizar.
+ * @param post            Datos de la publicacion a renderizar.
+ * @param currentUserId   UID del usuario autenticado.
+ * @param db              Instancia de FirebaseFirestore para eliminar el post.
  */
 @Composable
-fun PostCard(post: Post) {
+fun PostCard(
+    post: Post,
+    currentUserId: String,
+    db: FirebaseFirestore
+) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    val isOwner = post.userId == currentUserId
+
+    // Dialogo de confirmacion para eliminar
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Eliminar publicacion") },
+            text = { Text("¿Estas seguro de que deseas eliminar esta publicacion?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    db.collection("posts").document(post.id).delete()
+                }) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -251,7 +288,7 @@ fun PostCard(post: Post) {
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
 
-            // Header: avatar + username + timestamp
+            // Header: avatar + username + timestamp + (boton eliminar si es el dueno)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -287,6 +324,17 @@ fun PostCard(post: Post) {
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                // Boton eliminar — solo visible para el dueno del post
+                if (isOwner) {
+                    IconButton(onClick = { showDeleteDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Eliminar publicacion",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
 
