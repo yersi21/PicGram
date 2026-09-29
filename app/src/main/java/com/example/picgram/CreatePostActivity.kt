@@ -24,38 +24,30 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
 import com.example.picgram.ui.theme.PicGramTheme
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
- * Actividad encargada de la creacion y publicacion de contenido estilo Instagram (RF-10).
- * Permite seleccionar fotos o videos de la galeria mediante el Photo Picker de Android,
- * subirlos a Supabase Storage via API REST y registrar la publicacion en Cloud Firestore.
+ * Actividad de creacion de publicaciones (RF-10).
+ * Sube el archivo multimedia a Supabase Storage y guarda los metadatos
+ * en la tabla public.posts de Supabase PostgreSQL.
  *
- * Arquitectura hibrida:
- * - Firebase Auth   â†’ identificacion del usuario autenticado
- * - Firebase Firestore â†’ metadatos del post (username, caption, URL de imagen, timestamp)
- * - Supabase Storage   â†’ almacenamiento del archivo de imagen/video
+ * Arquitectura:
+ *   - Sesion: SessionManager (Supabase JWT)
+ *   - Almacenamiento de archivos: SupabaseStorage (REST)
+ *   - Metadatos del post: SupabaseDatabase (REST)
  */
 class CreatePostActivity : ComponentActivity() {
 
-    private lateinit var auth: FirebaseAuth
-    private lateinit var db: FirebaseFirestore
+    private val BUCKET_NAME = "picgram-posts"
 
-    // URI del archivo multimedia seleccionado de la galeria
     private var selectedMediaUri by mutableStateOf<Uri?>(null)
-    // Tipo de medio detectado por MIME: "image" o "video"
     private var mediaType by mutableStateOf("image")
-    // Indica si hay una operacion de subida en progreso
     private var isLoading by mutableStateOf(false)
-    // Mensaje descriptivo del paso actual de la subida
     private var loadingMessage by mutableStateOf("Publicando...")
 
-    // Contrato de Activity Result para seleccionar fotos y videos (Android Photo Picker)
     private val pickMediaLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -71,8 +63,12 @@ class CreatePostActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        auth = FirebaseAuth.getInstance()
-        db = FirebaseFirestore.getInstance()
+        // Verificar sesion activa
+        if (SessionManager.currentSession(this) == null) {
+            Toast.makeText(this, "Sesion expirada. Inicia sesion de nuevo.", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
 
         setContent {
             PicGramTheme {
@@ -89,7 +85,7 @@ class CreatePostActivity : ComponentActivity() {
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
                             )
                         },
-                        onSubmitPost = { caption -> fetchUsernameAndUpload(caption) },
+                        onSubmitPost = { caption -> startUpload(caption) },
                         onBackClicked = { finish() }
                     )
                 }
@@ -98,110 +94,72 @@ class CreatePostActivity : ComponentActivity() {
     }
 
     /**
-     * Recupera el username del usuario desde Firestore y luego orquesta la subida del post.
-     * Si no existe el documento de usuario, usa el displayName o email como fallback.
-     *
-     * @param caption Texto descriptivo ingresado por el usuario para el post.
+     * Obtiene el username desde Supabase y lanza la subida del post.
      */
-    private fun fetchUsernameAndUpload(caption: String) {
+    private fun startUpload(caption: String) {
         val uri = selectedMediaUri
         if (uri == null && caption.isBlank()) {
             Toast.makeText(this, "Agrega una foto/video o escribe una descripcion", Toast.LENGTH_SHORT).show()
             return
         }
-        val currentUser = auth.currentUser ?: run {
-            Toast.makeText(this, "Error: Usuario no autenticado", Toast.LENGTH_SHORT).show()
+
+        val session = SessionManager.currentSession(this) ?: run {
+            Toast.makeText(this, "Sesion expirada. Inicia sesion de nuevo.", Toast.LENGTH_SHORT).show()
+            finish()
             return
         }
 
         isLoading = true
         loadingMessage = "Preparando publicacion..."
 
-        db.collection("users").document(currentUser.uid)
-            .get()
-            .addOnSuccessListener { document ->
-                val username = document.getString("username")
-                    ?: currentUser.displayName
-                    ?: currentUser.email
-                    ?: "Usuario"
-                uploadAndSavePost(caption, currentUser.uid, currentUser.email ?: "", username)
-            }
-            .addOnFailureListener {
-                val username = currentUser.displayName ?: currentUser.email ?: "Usuario"
-                uploadAndSavePost(caption, currentUser.uid, currentUser.email ?: "", username)
-            }
-    }
-
-    /**
-     * Sube el archivo a Supabase Storage via REST (en Dispatchers.IO) y guarda el post en Firestore.
-     * Usa lifecycleScope para respetar el ciclo de vida de la Activity.
-     *
-     * @param caption   Descripcion del post.
-     * @param userId    UID del usuario autor.
-     * @param userEmail Correo del autor.
-     * @param username  Nombre de usuario del autor.
-     */
-    private fun uploadAndSavePost(
-        caption: String, userId: String, userEmail: String, username: String
-    ) {
-        val uri = selectedMediaUri
-
         lifecycleScope.launch {
             try {
-                // â”€â”€ 1. Subir archivo a Supabase (si hay uno seleccionado) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                val mediaUrl: String
+                // 1. Usar username de la sesion (ya se resolvio al iniciar sesion).
+                //    Fallback: parte antes del '@' del correo si por algun motivo esta vacio.
+                val username = session.username.ifBlank {
+                    session.email.substringBefore("@")
+                }
 
+                // 2. Subir archivo a Supabase Storage (si hay uno seleccionado)
+                val mediaUrl: String
                 if (uri != null) {
                     val extension = if (mediaType == "video") "mp4" else "jpg"
                     val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
-                    val storagePath = "posts/$userId/${UUID.randomUUID()}.$extension"
+                    val storagePath = "posts/${session.userId}/${UUID.randomUUID()}.$extension"
 
                     loadingMessage = "Subiendo a Supabase Storage..."
-
                     mediaUrl = withContext(Dispatchers.IO) {
                         val bytes = contentResolver.openInputStream(uri)
                             ?.use { it.readBytes() }
                             ?: throw Exception("No se pudo leer el archivo seleccionado")
-
                         SupabaseStorage.upload(storagePath, bytes, mimeType)
                     }
                 } else {
-                    mediaUrl = ""  // Publicacion solo de texto
+                    mediaUrl = ""
                 }
 
-                // ── 2. Guardar en Firestore: fire-and-forget ──────────────────────
-                // NO usamos await() porque espera confirmacion del SERVIDOR y se cuelga.
-                // Firestore tiene persistencia offline: escribe al cache local de inmediato
-                // y sincroniza al servidor en background automaticamente.
-                // El snapshotListener de MainActivity detectara el cambio desde el cache local.
+                // 3. Guardar metadatos en Supabase PostgreSQL (fire-and-forget)
                 loadingMessage = "Guardando publicacion..."
+                val timestamp = System.currentTimeMillis()
+                withContext(Dispatchers.IO) {
+                    SupabaseDatabase.insertPost(
+                        token = session.accessToken,
+                        userId = session.userId,
+                        userEmail = session.email,
+                        username = username,
+                        caption = caption,
+                        mediaUrl = mediaUrl,
+                        mediaType = mediaType,
+                        timestamp = timestamp
+                    )
+                }
 
-                val postMap = hashMapOf(
-                    "userId" to userId,
-                    "userEmail" to userEmail,
-                    "username" to username,
-                    "caption" to caption,
-                    "mediaUrl" to mediaUrl,
-                    "mediaType" to mediaType,
-                    "timestamp" to System.currentTimeMillis()
-                )
-                db.collection("posts").add(postMap)
-                    .addOnFailureListener { e ->
-                        // Si falla el servidor loggeamos el error (raro con persistencia offline)
-                        android.util.Log.e("CreatePost", "Firestore sync error: ${e.message}")
-                    }
-
-                // ── 3. Exito — cerrar Activity de inmediato (UI nunca se bloquea) ─
+                // 4. Exito
                 isLoading = false
-                Toast.makeText(
-                    this@CreatePostActivity,
-                    "Publicacion creada con exito!",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this@CreatePostActivity, "Publicacion creada con exito!", Toast.LENGTH_SHORT).show()
                 finish()
 
             } catch (e: Exception) {
-                // Captura errores de Supabase Storage Y de Firestore
                 isLoading = false
                 Toast.makeText(
                     this@CreatePostActivity,
@@ -211,12 +169,8 @@ class CreatePostActivity : ComponentActivity() {
             }
         }
     }
-
 }
 
-/**
- * Componente Composable que dibuja la interfaz de creacion de publicaciones (RF-10).
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreatePostScreen(
@@ -251,7 +205,6 @@ fun CreatePostScreen(
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Vista previa del archivo seleccionado o placeholder para seleccionar
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -315,16 +268,13 @@ fun CreatePostScreen(
                 }
             }
 
-            // Overlay de progreso durante la subida a Supabase y guardado en Firestore
+            // Overlay de progreso
             if (isLoading) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)
                 ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Card(shape = RoundedCornerShape(16.dp)) {
                             Column(
                                 modifier = Modifier.padding(32.dp),
@@ -332,10 +282,7 @@ fun CreatePostScreen(
                             ) {
                                 CircularProgressIndicator()
                                 Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = loadingMessage,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
+                                Text(text = loadingMessage, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }

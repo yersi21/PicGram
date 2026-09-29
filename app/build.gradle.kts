@@ -8,7 +8,7 @@ val localProperties = Properties().apply {
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.gms.google-services") version "4.5.0"
+    // google-services eliminado: ya no usamos Firebase
 }
 
 android {
@@ -26,7 +26,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Credenciales de Supabase expuestas de forma segura via BuildConfig
+        // Credenciales de Supabase expuestas via BuildConfig (seguro: no van al repo)
         buildConfigField("String", "SUPABASE_URL", "\"${localProperties["SUPABASE_URL"]}\"")
         buildConfigField("String", "SUPABASE_KEY", "\"${localProperties["SUPABASE_KEY"]}\"")
     }
@@ -44,25 +44,18 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true  // Necesario para exponer SUPABASE_URL y SUPABASE_KEY
+        buildConfig = true
     }
 }
 
 dependencies {
-    // Firebase BoM y modulos (Auth, Firestore, Analytics - sin Storage)
-    implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
-    implementation("com.google.firebase:firebase-auth")
-    implementation("com.google.firebase:firebase-firestore")
-    implementation("com.google.firebase:firebase-analytics")
-
-    // Coroutines: soporte para Tasks de Firebase y Dispatchers.IO para las subidas
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+    // Coroutines para operaciones IO (subida a Supabase, llamadas REST)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // Iconos de Material Design para Compose
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Coil para carga de imagenes en Compose (URL publica de Supabase Storage)
+    // Coil para carga de imagenes desde URLs de Supabase Storage
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     implementation(platform(libs.androidx.compose.bom))

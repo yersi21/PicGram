@@ -1,4 +1,4 @@
-﻿package com.example.picgram
+package com.example.picgram
 
 import android.content.Intent
 import android.os.Bundle
@@ -19,29 +19,26 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import com.example.picgram.ui.theme.PicGramTheme
-import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Actividad encargada del Inicio de Sesion de Usuarios (RF-02).
- * Si ya existe una sesion activa, redirige directamente a MainActivity.
- * Valida y autentica las credenciales del usuario con Firebase Authentication.
+ * Actividad de Inicio de Sesion (RF-02).
+ * Si hay sesion guardada en SessionManager, redirige directamente al feed.
+ * Autentica con Supabase Auth y guarda el JWT en SessionManager.
  */
 class LoginActivity : ComponentActivity() {
 
-    // Instancia de Firebase Authentication
-    private lateinit var auth: FirebaseAuth
-
-    // Estado de carga observable desde el Composable
     private var isLoading by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        auth = FirebaseAuth.getInstance()
-
-        // RF-02: Si ya hay sesion activa, saltar directamente al feed principal
-        if (auth.currentUser != null) {
+        // RF-02: Auto-login si ya hay sesion activa guardada
+        if (SessionManager.currentSession(this) != null) {
             navigateToMain()
             return
         }
@@ -54,10 +51,8 @@ class LoginActivity : ComponentActivity() {
                 ) {
                     LoginScreen(
                         isLoading = isLoading,
-                        onLoginClicked = { email, password ->
-                            loginUser(email, password)
-                        },
-                        onNavigateToRegister = {
+                        onLoginClicked = { email, password -> handleLogin(email, password) },
+                        onGoToRegisterClicked = {
                             startActivity(Intent(this, RegisterActivity::class.java))
                         }
                     )
@@ -67,154 +62,166 @@ class LoginActivity : ComponentActivity() {
     }
 
     /**
-     * Valida los campos y autentica al usuario en Firebase con su correo y contrasena.
-     *
-     * @param email    Correo electronico ingresado.
-     * @param password Contrasena ingresada.
+     * Valida los campos y ejecuta el inicio de sesion con Supabase Auth.
+     * Tras autenticarse, obtiene el username del perfil y guarda la sesion.
      */
-    private fun loginUser(email: String, password: String) {
-        if (!Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
-            Toast.makeText(this, "Ingresa un correo electronico valido", Toast.LENGTH_SHORT).show()
+    private fun handleLogin(email: String, password: String) {
+        if (!Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
+            Toast.makeText(this, "Formato de correo invalido", Toast.LENGTH_SHORT).show()
             return
         }
-        if (password.isBlank()) {
+        if (password.isEmpty()) {
             Toast.makeText(this, "Ingresa tu contrasena", Toast.LENGTH_SHORT).show()
             return
         }
 
         isLoading = true
 
-        auth.signInWithEmailAndPassword(email, password)
-            .addOnCompleteListener(this) { task ->
-                isLoading = false
-                if (task.isSuccessful) {
-                    Toast.makeText(this, "Bienvenido de vuelta!", Toast.LENGTH_SHORT).show()
-                    navigateToMain()
-                } else {
-                    val errorMsg = when {
-                        task.exception?.message?.contains("no user record") == true ||
-                        task.exception?.message?.contains("user-not-found") == true ->
-                            "No existe una cuenta con ese correo"
-                        task.exception?.message?.contains("password is invalid") == true ||
-                        task.exception?.message?.contains("wrong-password") == true ->
-                            "Contrasena incorrecta"
-                        task.exception?.message?.contains("too-many-requests") == true ->
-                            "Demasiados intentos fallidos. Intenta mas tarde"
-                        else -> "Error al iniciar sesion: ${task.exception?.message}"
+        lifecycleScope.launch {
+            try {
+                val authResult: AuthResult
+                val username: String
+                val cleanEmail = email.trim()
+
+                withContext(Dispatchers.IO) {
+                    // 1. Autenticar con Supabase Auth
+                    authResult = SupabaseAuth.signIn(cleanEmail, password)
+
+                    // 2. Obtener username desde public.users.
+                    //    Si el perfil no existe (cuenta antes de la migracion),
+                    //    usamos la parte del correo antes del '@' como nombre.
+                    val fetchedUsername = SupabaseDatabase.getUsername(authResult.accessToken, authResult.userId)
+                    username = fetchedUsername.ifBlank {
+                        cleanEmail.substringBefore("@")
                     }
-                    Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
                 }
+
+                // 3. Persistir sesion y navegar al feed
+                SessionManager.saveSession(
+                    this@LoginActivity,
+                    UserSession(
+                        accessToken = authResult.accessToken,
+                        userId = authResult.userId,
+                        email = authResult.email,
+                        username = username
+                    )
+                )
+                navigateToMain()
+
+            } catch (e: Exception) {
+                isLoading = false
+                val message = when {
+                    e.message?.contains("Invalid login credentials", ignoreCase = true) == true ||
+                    e.message?.contains("invalid_grant", ignoreCase = true) == true ->
+                        "Correo o contrasena incorrectos"
+                    e.message?.contains("Email not confirmed", ignoreCase = true) == true ->
+                        "Confirma tu correo antes de iniciar sesion"
+                    e.message?.contains("too many", ignoreCase = true) == true ->
+                        "Demasiados intentos. Espera un momento."
+                    else -> e.message ?: "Error al iniciar sesion"
+                }
+                Toast.makeText(this@LoginActivity, message, Toast.LENGTH_LONG).show()
             }
+        }
     }
 
-    /** Navega a MainActivity limpiando el back stack para evitar volver al Login. */
     private fun navigateToMain() {
-        val intent = Intent(this, MainActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
         startActivity(intent)
         finish()
     }
 }
 
-/**
- * Componente Composable que dibuja la interfaz grafica de la pantalla de Login (RF-02).
- *
- * @param isLoading           Indica si hay una autenticacion en curso.
- * @param onLoginClicked      Callback con (email, password) al presionar Iniciar Sesion.
- * @param onNavigateToRegister Callback para abrir la pantalla de registro.
- */
 @Composable
 fun LoginScreen(
     isLoading: Boolean,
-    onLoginClicked: (String, String) -> Unit,
-    onNavigateToRegister: () -> Unit
+    onLoginClicked: (email: String, password: String) -> Unit,
+    onGoToRegisterClicked: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 48.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "PicGram",
-                style = MaterialTheme.typography.displayMedium,
-                color = MaterialTheme.colorScheme.primary
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 32.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "PicGram",
+            style = MaterialTheme.typography.displaySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Text(
+            text = "Inicia sesion para continuar",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 32.dp)
+        )
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Correo electronico") },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Next
             )
-            Text(
-                text = "Inicia sesion para continuar",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 32.dp)
-            )
+        )
 
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = { Text("Correo electronico") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next
-                ),
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading
-            )
+        Spacer(modifier = Modifier.height(12.dp))
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Contrasena") },
-                singleLine = true,
-                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done
-                ),
-                trailingIcon = {
-                    TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Text(if (passwordVisible) "Ocultar" else "Ver")
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(
-                onClick = { onLoginClicked(email.trim(), password) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Ingresando...")
-                } else {
-                    Text("Iniciar Sesion")
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Contrasena") },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading,
+            singleLine = true,
+            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                imeAction = ImeAction.Done
+            ),
+            trailingIcon = {
+                TextButton(onClick = { passwordVisible = !passwordVisible }) {
+                    Text(if (passwordVisible) "Ocultar" else "Ver")
                 }
             }
+        )
 
-            TextButton(
-                onClick = onNavigateToRegister,
-                modifier = Modifier.padding(top = 8.dp),
-                enabled = !isLoading
-            ) {
-                Text("No tienes cuenta? Registrate aqui")
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = { onLoginClicked(email, password) },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Ingresando...")
+            } else {
+                Text("Iniciar Sesion")
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        TextButton(onClick = onGoToRegisterClicked, enabled = !isLoading) {
+            Text("Crear cuenta nueva")
         }
     }
 }
