@@ -1,0 +1,8 @@
+// Temporary verification workaround: lint 32.3.2 was repeatedly stuck in
+// BidirectionalTextDetector -> KotlinUFile.getAllCommentsInFile in this environment.
+// Only applies when explicitly passed via Gradle -I; default project lint is unchanged.
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        project.extensions.getByName('android').lint.disable.add('BidiSpoofing')
+    }
+}

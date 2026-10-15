@@ -3,6 +3,7 @@
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 /**
  * Resultado de una operacion de autenticacion exitosa.
@@ -11,11 +12,7 @@ import java.net.URL
  * @param userId      UUID del usuario en Supabase Auth.
  * @param email       Correo del usuario.
  */
-data class AuthResult(
-    val accessToken: String,
-    val userId: String,
-    val email: String
-)
+typealias AuthResult = com.example.picgram.data.model.AuthResult
 
 /**
  * Cliente de Supabase Auth via REST API.
@@ -34,25 +31,30 @@ object SupabaseAuth {
      * Lanza [Exception] con mensaje legible si el servidor retorna un error.
      */
     private fun post(endpoint: String, body: JSONObject, token: String? = null): JSONObject {
+        return authRequest("POST", endpoint, body, token)
+    }
+
+    private fun authRequest(method: String, endpoint: String, body: JSONObject? = null,
+                            token: String? = null): JSONObject {
         val url = URL("${BuildConfig.SUPABASE_URL}$endpoint")
         val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
+            requestMethod = method
             setRequestProperty("apikey", BuildConfig.SUPABASE_KEY)
             setRequestProperty("Content-Type", "application/json")
             if (token != null) setRequestProperty("Authorization", "Bearer $token")
             connectTimeout = 15_000
             readTimeout = 15_000
-            doOutput = true
+            doOutput = body != null
         }
         try {
-            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            if (body != null) connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = connection.responseCode
             return if (code in 200..299) {
                 val text = connection.inputStream.bufferedReader().use { it.readText() }
                 if (text.isBlank()) JSONObject() else JSONObject(text)
             } else {
                 val errText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                throw Exception(parseErrorMessage(errText, code))
+                throw ApiException(code, parseErrorMessage(errText, code))
             }
         } finally {
             connection.disconnect()
@@ -63,10 +65,8 @@ object SupabaseAuth {
     private fun parseErrorMessage(body: String, code: Int): String {
         return try {
             val j = JSONObject(body)
-            j.optString("msg", null)
-                ?: j.optString("message", null)
-                ?: j.optString("error_description", null)
-                ?: j.optString("error", null)
+            listOf("msg", "message", "error_description", "error")
+                .firstNotNullOfOrNull { key -> j.optString(key, "").takeIf { it.isNotBlank() && it != "null" } }
                 ?: "Error de autenticacion ($code)"
         } catch (_: Exception) {
             "Error de autenticacion ($code)"
@@ -80,20 +80,21 @@ object SupabaseAuth {
      *
      * @throws Exception si el correo ya existe o el registro falla.
      */
-    fun signUp(email: String, password: String): AuthResult {
+    fun signUp(email: String, password: String, username: String): AuthResult {
         val body = JSONObject().apply {
             put("email", email)
             put("password", password)
+            put("data", JSONObject().put("username", username))
         }
         val response = post("/auth/v1/signup", body)
 
         val accessToken = response.optString("access_token", "")
-        val user = response.optJSONObject("user")
+        val user = response.optJSONObject("user") ?: response.takeIf { it.has("id") }
         val userId = user?.optString("id") ?: ""
 
         if (accessToken.isEmpty()) {
             // Supabase retorna esto cuando la confirmacion de correo esta activada
-            val confirmationSent = user?.optString("email_confirmed_at", null) == null
+            val confirmationSent = user?.isNull("email_confirmed_at") == true
                 && (user?.optJSONArray("identities")?.length() ?: 0) > 0
             if (confirmationSent) {
                 throw Exception("Revisa tu correo y confirma tu cuenta antes de iniciar sesion")
@@ -102,7 +103,7 @@ object SupabaseAuth {
         }
         if (userId.isEmpty()) throw Exception("No se pudo obtener el ID de usuario")
 
-        return AuthResult(accessToken, userId, email)
+        return parseSession(response, email)
     }
 
     /**
@@ -125,7 +126,55 @@ object SupabaseAuth {
             throw Exception("Credenciales incorrectas. Verifica tu correo y contrasena.")
         }
 
-        return AuthResult(accessToken, userId, email)
+        return parseSession(response, email)
+    }
+
+    fun refreshSession(refreshToken: String): AuthResult = parseSession(
+        post("/auth/v1/token?grant_type=refresh_token", JSONObject().put("refresh_token", refreshToken)),
+        ""
+    )
+
+    fun requestPasswordRecovery(email: String) {
+        val redirect = URLEncoder.encode(RecoveryLinks.REDIRECT_URL, "UTF-8")
+        post("/auth/v1/recover?redirect_to=$redirect", JSONObject().put("email", email))
+    }
+
+    /** Recovery credentials never enter SessionManager or replace the signed-in user's JWT. */
+    fun verifyRecoveryLink(link: RecoveryLink): AuthResult = when (link) {
+        is RecoveryLink.TokenHash -> parseSession(post("/auth/v1/verify",
+            JSONObject().put("token_hash", link.value).put("type", "recovery")), "")
+        is RecoveryLink.Tokens -> {
+            val user = authRequest("GET", "/auth/v1/user", token = link.accessToken)
+            AuthResult(link.accessToken, user.getString("id"), user.getString("email"),
+                refreshToken = link.refreshToken,
+                username = user.optJSONObject("user_metadata")?.optString("username", "") ?: "")
+        }
+    }
+
+    fun updateRecoveredPassword(session: AuthResult, password: String): String =
+        executeRecoveryUpdate(session, refresh = ::refreshSession) { token ->
+            val user = authRequest("PUT", "/auth/v1/user", JSONObject().put("password", password), token)
+            check(user.getString("id") == session.userId) { "No se pudo confirmar el cambio de contraseña" }
+        }
+
+    fun closeRecoverySession(token: String) {
+        try { post("/auth/v1/logout?scope=local", JSONObject(), token) } catch (_: Exception) { }
+    }
+
+    private fun parseSession(response: JSONObject, fallbackEmail: String): AuthResult {
+        val user = response.getJSONObject("user")
+        val accessToken = response.getString("access_token")
+        val refreshToken = response.getString("refresh_token")
+        require(accessToken.isNotBlank() && refreshToken.isNotBlank()) { "Sesion incompleta" }
+        return AuthResult(
+            accessToken = accessToken,
+            userId = user.getString("id"),
+            email = user.optString("email", fallbackEmail),
+            refreshToken = refreshToken,
+            expiresAt = response.optLong("expires_at",
+                System.currentTimeMillis() / 1000 + response.optLong("expires_in", 3600)),
+            username = user.optJSONObject("user_metadata")?.optString("username", "") ?: ""
+        )
     }
 
     /**
@@ -153,12 +202,18 @@ object SupabaseAuth {
             }
             try {
                 val code = connection.responseCode
-                code in 200..299   // 401 = usuario borrado o token expirado
+                when (code) {
+                    in 200..299 -> true
+                    401, 403 -> false
+                    else -> throw ApiException(code, "No se pudo verificar la sesion ($code)")
+                }
             } finally {
                 connection.disconnect()
             }
-        } catch (_: Exception) {
-            true   // Error de red: asumir valido para no forzar logout innecesario
+        } catch (error: ApiException) {
+            throw error
+        } catch (_: java.io.IOException) {
+            true   // Una desconexion no invalida una sesion.
         }
     }
 }

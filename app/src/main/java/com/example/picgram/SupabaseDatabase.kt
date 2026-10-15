@@ -4,341 +4,214 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
-/**
- * Cliente de Supabase Database (PostgREST) via REST API.
- * Todos los metodos son bloqueantes â€” llamar desde Dispatchers.IO.
- */
+/** Blocking REST operations. Always call from Dispatchers.IO. */
 object SupabaseDatabase {
-
-    private fun request(
-        method: String,
-        endpoint: String,
-        token: String,
-        body: JSONObject? = null,
-        prefer: String? = null
-    ): String {
-        val url = URL("${BuildConfig.SUPABASE_URL}$endpoint")
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            setRequestProperty("apikey", BuildConfig.SUPABASE_KEY)
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Content-Type", "application/json")
-            if (prefer != null) setRequestProperty("Prefer", prefer)
-            connectTimeout = 15_000
-            readTimeout = 15_000
-            if (body != null) doOutput = true
+    private fun request(method: String, endpoint: String, token: String,
+                        body: JSONObject? = null, prefer: String? = null): String =
+        authenticatedRequest(token) { validToken ->
+            val connection = (URL("${BuildConfig.SUPABASE_URL}$endpoint").openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                setRequestProperty("apikey", BuildConfig.SUPABASE_KEY)
+                setRequestProperty("Authorization", "Bearer $validToken")
+                setRequestProperty("Content-Type", "application/json")
+                if (prefer != null) setRequestProperty("Prefer", prefer)
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                doOutput = body != null
+            }
+            try {
+                if (body != null) connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                if (code !in 200..299) {
+                    val detail = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    throw ApiException(code, "Database error ($code): $detail")
+                }
+                connection.inputStream.bufferedReader().use { it.readText() }
+            } finally { connection.disconnect() }
         }
-        try {
-            if (body != null) {
-                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            }
-            val code = connection.responseCode
-            return if (code in 200..299) {
-                connection.inputStream?.bufferedReader()?.use { it.readText() } ?: ""
-            } else {
-                val err = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
-                throw Exception("Database error ($code): $err")
-            }
-        } finally {
-            connection.disconnect()
+
+    /** Explicit paging avoids silently truncating counts at the server row limit. */
+    private fun rows(endpoint: String, token: String): List<JSONObject> {
+        val result = mutableListOf<JSONObject>()
+        var offset = 0
+        while (true) {
+            val page = JSONArray(request("GET", "$endpoint&limit=200&offset=$offset", token))
+            for (index in 0 until page.length()) result.add(page.getJSONObject(index))
+            if (page.length() == 0) return result
+            offset += page.length()
         }
     }
 
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // USERS
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    private fun JSONObject.stringOrEmpty(key: String): String = if (isNull(key)) "" else optString(key, "")
+
+    private fun post(obj: JSONObject) = Post(
+        id = obj.getString("id"), userId = obj.getString("user_id"),
+        userEmail = obj.stringOrEmpty("user_email"), username = obj.stringOrEmpty("username"),
+        caption = obj.stringOrEmpty("caption"), mediaUrl = obj.stringOrEmpty("media_url"),
+        mediaType = obj.optString("media_type", "image"), timestamp = obj.optLong("timestamp"))
+
+    private fun comment(obj: JSONObject) = Comment(
+        id = obj.getString("id"), postId = obj.getString("post_id"), userId = obj.getString("user_id"),
+        username = obj.stringOrEmpty("username"), content = obj.getString("content"), timestamp = obj.optLong("timestamp"))
 
     fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long) {
-        val body = JSONObject().apply {
-            put("id", id); put("email", email)
-            put("username", username); put("created_at", createdAt)
-        }
-        request("POST", "/rest/v1/users", token, body, prefer = "return=minimal")
+        val body = JSONObject().put("id", id).put("email", email).put("username", username).put("created_at", createdAt)
+        request("POST", "/rest/v1/users?on_conflict=id", token, body,
+            "resolution=ignore-duplicates,return=minimal")
     }
 
     fun getUsername(token: String, userId: String): String {
-        val response = request("GET", "/rest/v1/users?id=eq.$userId&select=username", token)
-        return try {
-            val array = JSONArray(response)
-            if (array.length() > 0) array.getJSONObject(0).optString("username", "")
-            else ""   // Perfil no encontrado â€” el caller decide el fallback
-        } catch (_: Exception) { "" }
+        val result = JSONArray(request("GET", "/rest/v1/users?id=eq.$userId&select=username", token))
+        return if (result.length() == 0) "" else result.getJSONObject(0).stringOrEmpty("username")
     }
 
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // POSTS
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    fun getAvatarUrl(token: String, userId: String): String {
+        val result = JSONArray(request("GET", "/rest/v1/users?id=eq.$userId&select=avatar_url", token))
+        return if (result.length() == 0) "" else result.getJSONObject(0).stringOrEmpty("avatar_url")
+    }
 
-    /**
-     * Obtiene publicaciones del feed personalizado: solo posts del usuario actual y
-     * de los usuarios que sigue. Si no sigue a nadie, solo muestra sus propios posts.
-     *
-     * Flujo:
-     *  1. GET /follows → IDs de usuarios seguidos + currentUserId
-     *  2. GET /posts?user_id=in.(ids) → posts filtrados
-     *  3. GET /likes + /comments → contadores en Kotlin
-     */
+    fun getAvatarUrls(token: String, userIds: List<String>): Map<String, String> = try {
+        userIds.filter { it.isNotBlank() }.distinct().chunked(100).flatMap { ids ->
+            rows("/rest/v1/users?id=in.(${ids.joinToString(",")})&select=id,avatar_url&order=id", token)
+        }.associate { it.getString("id") to it.stringOrEmpty("avatar_url") }
+    } catch (error: Exception) {
+        if (error is SessionExpiredException || (error is ApiException && error.statusCode == 401)) throw error
+        android.util.Log.w("PicGram", "No se pudieron cargar las miniaturas de perfil", error)
+        emptyMap()
+    }
+
+    fun updateAvatarUrl(token: String, userId: String, avatarUrl: String) {
+        val result = JSONArray(request("PATCH", "/rest/v1/users?id=eq.$userId", token,
+            JSONObject().put("avatar_url", avatarUrl), "return=representation"))
+        check(result.length() == 1) { "No se pudo actualizar tu perfil. Verifica sus permisos." }
+    }
+
     fun getPosts(token: String, currentUserId: String): List<Post> {
-        // 1. IDs de usuarios cuyo contenido debe aparecer: yo + a quienes sigo
-        val feedUserIds = mutableListOf(currentUserId)
-        try {
-            val followsJson = request("GET", "/rest/v1/follows?follower_id=eq.$currentUserId&select=following_id", token)
-            val arr = JSONArray(followsJson)
-            for (i in 0 until arr.length()) {
-                feedUserIds.add(arr.getJSONObject(i).optString("following_id"))
-            }
-        } catch (_: Exception) { /* tabla follows aun no existe — solo posts propios */ }
-
-        val idsFilter = feedUserIds.joinToString(",")
-        val postsJson = request("GET", "/rest/v1/posts?user_id=in.($idsFilter)&select=*&order=timestamp.desc", token)
-
-        // 2. Likes â€” si la tabla no existe aun retorna lista vacia graciosamente
-        val likesCountByPost = mutableMapOf<String, Int>()
-        val likedIds = mutableSetOf<String>()
-        try {
-            val arr = JSONArray(request("GET", "/rest/v1/likes?select=post_id,user_id", token))
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val postId = obj.optString("post_id")
-                val userId = obj.optString("user_id")
-                likesCountByPost[postId] = (likesCountByPost[postId] ?: 0) + 1
-                if (userId == currentUserId) likedIds.add(postId)
-            }
-        } catch (_: Exception) { /* tabla aun no creada â€” mostrar ceros */ }
-
-        // 3. Conteo de comentarios por post
-        val commentsCountByPost = mutableMapOf<String, Int>()
-        try {
-            val arr = JSONArray(request("GET", "/rest/v1/comments?select=post_id", token))
-            for (i in 0 until arr.length()) {
-                val postId = arr.getJSONObject(i).optString("post_id")
-                commentsCountByPost[postId] = (commentsCountByPost[postId] ?: 0) + 1
-            }
-        } catch (_: Exception) { /* tabla aun no creada â€” mostrar ceros */ }
-
-        return try {
-            val arr = JSONArray(postsJson)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                val postId = obj.optString("id")
-                Post(
-                    id = postId,
-                    userId = obj.optString("user_id"),
-                    userEmail = obj.optString("user_email"),
-                    username = obj.optString("username"),
-                    caption = obj.optString("caption"),
-                    mediaUrl = obj.optString("media_url"),
-                    mediaType = obj.optString("media_type", "image"),
-                    timestamp = obj.optLong("timestamp"),
-                    likesCount = likesCountByPost[postId] ?: 0,
-                    commentsCount = commentsCountByPost[postId] ?: 0,
-                    likedByMe = postId in likedIds
-                )
-            }
-        } catch (_: Exception) { emptyList() }
+        val following = getFollowingIds(token, currentUserId)
+        if (following.isEmpty()) return emptyList()
+        val posts = following.chunked(100).flatMap { ids ->
+            rows("/rest/v1/posts?user_id=in.(${ids.joinToString(",")})&select=*&order=timestamp.desc,id.desc", token).map(::post)
+        }.sortedWith(compareByDescending<Post> { it.timestamp }.thenByDescending { it.id })
+        if (posts.isEmpty()) return posts
+        val likes = posts.map { it.id }.chunked(100).flatMap { ids ->
+            rows("/rest/v1/likes?post_id=in.(${ids.joinToString(",")})&select=post_id,user_id&order=post_id,user_id", token)
+        }
+        val comments = posts.map { it.id }.chunked(100).flatMap { ids ->
+            rows("/rest/v1/comments?post_id=in.(${ids.joinToString(",")})&select=id,post_id&order=id", token)
+        }
+        val avatars = posts.map { it.userId }.distinct().chunked(100).flatMap { ids ->
+            rows("/rest/v1/users?id=in.(${ids.joinToString(",")})&select=id,avatar_url&order=id", token)
+        }.associate { it.getString("id") to it.stringOrEmpty("avatar_url") }
+        val likeCounts = likes.groupingBy { it.getString("post_id") }.eachCount()
+        val commentCounts = comments.groupingBy { it.getString("post_id") }.eachCount()
+        val likedIds = likes.filter { it.getString("user_id") == currentUserId }.map { it.getString("post_id") }.toSet()
+        return posts.map { it.copy(likesCount = likeCounts[it.id] ?: 0,
+            commentsCount = commentCounts[it.id] ?: 0, likedByMe = it.id in likedIds,
+            avatarUrl = avatars[it.userId].orEmpty()) }
     }
 
-    fun insertPost(
-        token: String, userId: String, userEmail: String, username: String,
-        caption: String, mediaUrl: String, mediaType: String, timestamp: Long
-    ) {
-        val body = JSONObject().apply {
-            put("user_id", userId); put("user_email", userEmail)
-            put("username", username); put("caption", caption)
-            put("media_url", mediaUrl); put("media_type", mediaType)
-            put("timestamp", timestamp)
+    fun insertPost(token: String, userId: String, userEmail: String, username: String,
+                   caption: String, mediaUrl: String, mediaType: String, timestamp: Long, id: String) {
+        require(mediaUrl.isNotBlank() && mediaType in listOf("image", "video")) {
+            "La publicación debe incluir una imagen o un video"
         }
-        request("POST", "/rest/v1/posts", token, body, prefer = "return=minimal")
+        val body = JSONObject().put("id", id).put("user_id", userId).put("user_email", userEmail)
+            .put("username", username).put("caption", caption).put("media_url", mediaUrl)
+            .put("media_type", mediaType).put("timestamp", timestamp)
+        request("POST", "/rest/v1/posts?on_conflict=id", token, body,
+            "resolution=ignore-duplicates,return=minimal")
+        val stored = JSONArray(request("GET", "/rest/v1/posts?id=eq.$id&select=id,user_id", token))
+        check(stored.length() == 1 && stored.getJSONObject(0).getString("user_id") == userId) {
+            "No se pudo confirmar la publicacion"
+        }
     }
 
     fun deletePost(token: String, postId: String) {
-        request("DELETE", "/rest/v1/posts?id=eq.$postId", token)
+        val deleted = JSONArray(request("DELETE", "/rest/v1/posts?id=eq.$postId", token, prefer = "return=representation"))
+        check(deleted.length() == 1) { "La publicacion no existe o no tienes permiso para borrarla" }
     }
 
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // LIKES
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    /**
-     * Retorna (likesCount, likedByMe) para un post especifico.
-     * Se usa en PostDetailActivity para cargar el estado inicial de likes.
-     */
     fun getLikesForPost(token: String, postId: String, currentUserId: String): Pair<Int, Boolean> {
-        val response = request("GET", "/rest/v1/likes?post_id=eq.$postId&select=user_id", token)
-        return try {
-            val arr = JSONArray(response)
-            val count = arr.length()
-            val likedByMe = (0 until count).any { arr.getJSONObject(it).optString("user_id") == currentUserId }
-            Pair(count, likedByMe)
-        } catch (_: Exception) { Pair(0, false) }
+        val likes = rows("/rest/v1/likes?post_id=eq.$postId&select=user_id&order=user_id", token)
+        return likes.size to likes.any { it.getString("user_id") == currentUserId }
     }
 
-    /**
-     * Alterna el like en un post. Si [currentlyLiked] es true elimina el like, si no lo agrega.
-     */
     fun toggleLike(token: String, postId: String, userId: String, currentlyLiked: Boolean) {
-        if (currentlyLiked) {
-            request("DELETE", "/rest/v1/likes?post_id=eq.$postId&user_id=eq.$userId", token)
-        } else {
-            val body = JSONObject().apply { put("post_id", postId); put("user_id", userId) }
-            request("POST", "/rest/v1/likes", token, body, prefer = "return=minimal")
-        }
+        if (currentlyLiked) request("DELETE", "/rest/v1/likes?post_id=eq.$postId&user_id=eq.$userId", token)
+        else request("POST", "/rest/v1/likes?on_conflict=post_id,user_id", token,
+            JSONObject().put("post_id", postId).put("user_id", userId),
+            "resolution=ignore-duplicates,return=minimal")
     }
 
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // COMMENTS
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    /** Agrega un comentario a un post. */
-    fun addComment(
-        token: String, postId: String, userId: String,
-        username: String, content: String, timestamp: Long
-    ) {
-        val body = JSONObject().apply {
-            put("post_id", postId); put("user_id", userId)
-            put("username", username); put("content", content)
-            put("timestamp", timestamp)
-        }
-        request("POST", "/rest/v1/comments", token, body, prefer = "return=minimal")
+    fun addComment(token: String, postId: String, userId: String,
+                   username: String, content: String, timestamp: Long, id: String): Comment {
+        val body = JSONObject().put("id", id).put("post_id", postId).put("user_id", userId)
+            .put("username", username).put("content", content).put("timestamp", timestamp)
+        val result = JSONArray(request("POST", "/rest/v1/comments?on_conflict=id", token, body,
+            "resolution=ignore-duplicates,return=representation"))
+        val stored = if (result.length() > 0) result else
+            JSONArray(request("GET", "/rest/v1/comments?id=eq.$id&select=*", token))
+        val created = comment(stored.getJSONObject(0))
+        check(created.userId == userId && created.postId == postId) { "No se pudo confirmar el comentario" }
+        return created
     }
 
-    /** Obtiene todos los comentarios de un post, ordenados del mas antiguo al mas nuevo. */
     fun getComments(token: String, postId: String): List<Comment> {
-        val response = request("GET", "/rest/v1/comments?post_id=eq.$postId&order=timestamp.asc", token)
-        return try {
-            val arr = JSONArray(response)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                Comment(
-                    id = obj.optString("id"),
-                    postId = obj.optString("post_id"),
-                    userId = obj.optString("user_id"),
-                    username = obj.optString("username"),
-                    content = obj.optString("content"),
-                    timestamp = obj.optLong("timestamp")
-                )
-            }
-        } catch (_: Exception) { emptyList() }
+        val comments = rows("/rest/v1/comments?post_id=eq.$postId&select=*&order=timestamp.asc,id.asc", token).map(::comment)
+        val avatars = getAvatarUrls(token, comments.map { it.userId })
+        return comments.map { it.copy(avatarUrl = avatars[it.userId].orEmpty()) }
     }
 
-    /** Elimina un comentario (solo el autor puede hacerlo por RLS). */
     fun deleteComment(token: String, commentId: String) {
-        request("DELETE", "/rest/v1/comments?id=eq.$commentId", token)
+        val deleted = JSONArray(request("DELETE", "/rest/v1/comments?id=eq.$commentId", token, prefer = "return=representation"))
+        check(deleted.length() == 1) { "El comentario no existe o no tienes permiso para borrarlo" }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // BUSQUEDA DE USUARIOS (RF-06)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Busca usuarios en public.users cuyo username coincida (parcialmente, sin distincion
-     * de mayusculas) con [query]. Usa el operador ilike de PostgREST con wildcard *.
-     *
-     * Ejemplo: searchUsers(token, "mar") retorna "maria", "mario", "smarty", etc.
-     * Limit: 20 resultados maximo.
-     *
-     * IMPORTANTE: Debe llamarse desde un hilo de IO (Dispatchers.IO).
-     */
     fun searchUsers(token: String, query: String): List<UserProfile> {
-        val q = query.trim()
-        if (q.isBlank()) return emptyList()
-        val response = request(
-            "GET",
-            "/rest/v1/users?username=ilike.*$q*&select=id,username,email&limit=20",
-            token
-        )
-        return try {
-            val arr = JSONArray(response)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                UserProfile(
-                    id = obj.optString("id"),
-                    username = obj.optString("username"),
-                    email = obj.optString("email")
-                )
-            }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    /**
-     * Obtiene todas las publicaciones de un usuario especifico ordenadas por
-     * fecha descendente. Se usa en la pantalla de perfil (UserProfileActivity).
-     *
-     * Los contadores de likes y comentarios se dejan en 0 intencionalmente:
-     * se cargan al abrir el detalle de cada publicacion (PostDetailActivity).
-     *
-     * IMPORTANTE: Debe llamarse desde un hilo de IO (Dispatchers.IO).
-     */
-    fun getUserPosts(token: String, userId: String): List<Post> {
-        val response = request(
-            "GET",
-            "/rest/v1/posts?user_id=eq.$userId&select=*&order=timestamp.desc",
-            token
-        )
-        return try {
-            val arr = JSONArray(response)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                Post(
-                    id = obj.optString("id"),
-                    userId = obj.optString("user_id"),
-                    userEmail = obj.optString("user_email"),
-                    username = obj.optString("username"),
-                    caption = obj.optString("caption"),
-                    mediaUrl = obj.optString("media_url"),
-                    mediaType = obj.optString("media_type", "image"),
-                    timestamp = obj.optLong("timestamp")
-                )
-            }
-        } catch (_: Exception) { emptyList() }
-    }
-    // ─────────────────────────────────────────────────────────────────────────
-    // FOLLOWS (Sistema de seguimiento)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /** Retorna los IDs de los usuarios que sigue [userId]. */
-    fun getFollowingIds(token: String, userId: String): List<String> {
-        return try {
-            val arr = JSONArray(request("GET", "/rest/v1/follows?follower_id=eq.$userId&select=following_id", token))
-            (0 until arr.length()).map { arr.getJSONObject(it).optString("following_id") }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    /** Retorna true si [followerId] sigue a [followingId]. */
-    fun isFollowing(token: String, followerId: String, followingId: String): Boolean {
-        return try {
-            JSONArray(request("GET",
-                "/rest/v1/follows?follower_id=eq.$followerId&following_id=eq.$followingId&select=id",
-                token)).length() > 0
-        } catch (_: Exception) { false }
-    }
-
-    /** Sigue a un usuario. Idempotente por la restriccion UNIQUE en la tabla. */
-    fun followUser(token: String, followerId: String, followingId: String) {
-        val body = JSONObject().apply {
-            put("follower_id", followerId)
-            put("following_id", followingId)
+        if (query.isBlank()) return emptyList()
+        val pattern = URLEncoder.encode("%${query.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%", "UTF-8")
+        val result = JSONArray(request("GET", "/rest/v1/users?username=ilike.$pattern&select=id,username,avatar_url&order=username,id&limit=20", token))
+        return (0 until result.length()).map { index ->
+            val obj = result.getJSONObject(index)
+            UserProfile(id = obj.getString("id"), username = obj.stringOrEmpty("username"), avatarUrl = obj.stringOrEmpty("avatar_url"))
         }
-        request("POST", "/rest/v1/follows", token, body, prefer = "return=minimal")
     }
 
-    /** Deja de seguir a un usuario. */
+    fun getUserPosts(token: String, userId: String): List<Post> =
+        rows("/rest/v1/posts?user_id=eq.$userId&select=*&order=timestamp.desc,id.desc", token).map(::post)
+
+    private fun getFollowingIds(token: String, userId: String): List<String> =
+        rows("/rest/v1/follows?follower_id=eq.$userId&select=following_id&order=following_id", token).map { it.getString("following_id") }
+
+    fun getConnections(token: String, userId: String, type: ConnectionType): List<UserProfile> {
+        val ids = rows("/rest/v1/follows?${type.ownerColumn}=eq.$userId&select=${type.userColumn}&order=${type.userColumn}", token)
+            .map { it.getString(type.userColumn) }.distinct()
+        return ids.chunked(100).flatMap { batch ->
+            rows("/rest/v1/users?id=in.(${batch.joinToString(",")})&select=id,username,avatar_url&order=username,id", token)
+                .map { row -> UserProfile(id = row.getString("id"), username = row.stringOrEmpty("username"),
+                    avatarUrl = row.stringOrEmpty("avatar_url")) }
+        }.sortedWith(compareBy<UserProfile> { it.username.lowercase(java.util.Locale.ROOT) }.thenBy { it.id })
+    }
+
+    fun isFollowing(token: String, followerId: String, followingId: String): Boolean =
+        JSONArray(request("GET", "/rest/v1/follows?follower_id=eq.$followerId&following_id=eq.$followingId&select=id", token)).length() > 0
+
+    fun followUser(token: String, followerId: String, followingId: String) {
+        require(followerId != followingId) { "No puedes seguirte a ti mismo" }
+        request("POST", "/rest/v1/follows?on_conflict=follower_id,following_id", token,
+            JSONObject().put("follower_id", followerId).put("following_id", followingId),
+            "resolution=ignore-duplicates,return=minimal")
+    }
+
     fun unfollowUser(token: String, followerId: String, followingId: String) {
         request("DELETE", "/rest/v1/follows?follower_id=eq.$followerId&following_id=eq.$followingId", token)
     }
 
-    /** Cuenta cuantos seguidores tiene [userId]. */
-    fun getFollowersCount(token: String, userId: String): Int {
-        return try {
-            JSONArray(request("GET", "/rest/v1/follows?following_id=eq.$userId&select=id", token)).length()
-        } catch (_: Exception) { 0 }
-    }
+    fun getFollowersCount(token: String, userId: String): Int =
+        rows("/rest/v1/follows?following_id=eq.$userId&select=id&order=id", token).size
 
-    /** Cuenta a cuantos usuarios sigue [userId]. */
-    fun getFollowingCount(token: String, userId: String): Int {
-        return try {
-            JSONArray(request("GET", "/rest/v1/follows?follower_id=eq.$userId&select=id", token)).length()
-        } catch (_: Exception) { 0 }
-    }
+    fun getFollowingCount(token: String, userId: String): Int =
+        rows("/rest/v1/follows?follower_id=eq.$userId&select=id&order=id", token).size
 }
