@@ -19,6 +19,9 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -39,6 +42,8 @@ import com.example.picgram.presentation.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(
+    isDarkMode: Boolean,
+    onDarkModeChanged: (Boolean) -> Unit,
     posts: List<Post>,
     isLoadingFeed: Boolean,
     errorMessage: String?,
@@ -57,24 +62,49 @@ fun FeedScreen(
 ) {
     Scaffold(
         topBar = {
-            GlassTopAppBar(
-                title = { PicGramWordmark(Modifier.width(112.dp).height(52.dp), compact = true) },
-                actions = {
-                    IconButton(onClick = onSearchClicked) {
-                        Icon(Icons.Default.Search, contentDescription = "Buscar usuarios")
+            BoxWithConstraints {
+                val compactToolbar = maxWidth < 400.dp
+                var showMore by remember { mutableStateOf(false) }
+                GlassTopAppBar(
+                    title = { PicGramWordmark(Modifier.width(112.dp).height(52.dp), compact = true) },
+                    actions = {
+                        IconToggleButton(checked = isDarkMode, onCheckedChange = onDarkModeChanged) {
+                            Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = if (isDarkMode) "Desactivar modo oscuro" else "Activar modo oscuro",
+                                modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(onClick = onSearchClicked) {
+                            Icon(Icons.Default.Search, contentDescription = "Buscar usuarios")
+                        }
+                        if (!compactToolbar) {
+                            IconButton(onClick = onRefreshClicked) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Actualizar")
+                            }
+                        }
+                        // Avatar circular — abre el perfil propio al tocarlo
+                        IconButton(onClick = onProfileClicked) {
+                            ProfileAvatar(currentUsername, currentAvatarUrl, Modifier.size(32.dp))
+                        }
+                        if (compactToolbar) {
+                            Box {
+                                IconButton(onClick = { showMore = true }) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = "Más opciones")
+                                }
+                                DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
+                                    DropdownMenuItem(text = { Text("Actualizar") },
+                                        onClick = { showMore = false; onRefreshClicked() })
+                                    DropdownMenuItem(text = { Text("Cerrar sesión") },
+                                        onClick = { showMore = false; onLogoutClicked() })
+                                }
+                            }
+                        } else {
+                            IconButton(onClick = onLogoutClicked) {
+                                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar sesion")
+                            }
+                        }
                     }
-                    IconButton(onClick = onRefreshClicked) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Actualizar")
-                    }
-                    // Avatar circular — abre el perfil propio al tocarlo
-                    IconButton(onClick = onProfileClicked) {
-                        ProfileAvatar(currentUsername, currentAvatarUrl, Modifier.size(32.dp))
-                    }
-                    IconButton(onClick = onLogoutClicked) {
-                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar sesion")
-                    }
-                }
-            )
+                )
+            }
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(

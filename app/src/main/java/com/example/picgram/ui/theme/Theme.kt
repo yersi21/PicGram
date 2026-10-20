@@ -16,6 +16,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.picgram.data.PicGramApplication
 
 private val GlassDarkColors = darkColorScheme(
     primary = Color(0xFFCDD8FF), onPrimary = Color(0xFF16254D),
@@ -42,23 +44,26 @@ private val GlassLightColors = lightColorScheme(
 )
 
 @Composable
-fun PicGramTheme(darkTheme: Boolean = isSystemInDarkTheme(), dynamicColor: Boolean = false,
+fun PicGramTheme(darkTheme: Boolean? = null, dynamicColor: Boolean = false,
                  content: @Composable () -> Unit) {
+    val appearance = (LocalContext.current.applicationContext as? PicGramApplication)?.container?.theme
+    val preference = appearance?.darkMode?.collectAsStateWithLifecycle()?.value
+    val resolvedDarkTheme = darkTheme ?: preference ?: isSystemInDarkTheme()
     val colors = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            val dynamic = if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            val dynamic = if (resolvedDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             dynamic.copy(background = Color.Transparent)
         }
-        darkTheme -> GlassDarkColors
+        resolvedDarkTheme -> GlassDarkColors
         else -> GlassLightColors
     }
     val view = LocalView.current
     if (!view.isInEditMode) SideEffect {
         (view.context as? Activity)?.window?.let { window ->
             WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !darkTheme
-                isAppearanceLightNavigationBars = !darkTheme
+                isAppearanceLightStatusBars = !resolvedDarkTheme
+                isAppearanceLightNavigationBars = !resolvedDarkTheme
             }
         }
     }
@@ -67,9 +72,9 @@ fun PicGramTheme(darkTheme: Boolean = isSystemInDarkTheme(), dynamicColor: Boole
         medium = RoundedCornerShape(24.dp), large = RoundedCornerShape(28.dp),
         extraLarge = RoundedCornerShape(32.dp)
     )) {
-        CompositionLocalProvider(LocalGlassDark provides darkTheme) {
+        CompositionLocalProvider(LocalGlassDark provides resolvedDarkTheme) {
             Box(Modifier.fillMaxSize()) {
-                GlassBackdrop(darkTheme, Modifier.fillMaxSize())
+                GlassBackdrop(resolvedDarkTheme, Modifier.fillMaxSize())
                 content()
             }
         }

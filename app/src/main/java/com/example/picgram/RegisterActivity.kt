@@ -31,8 +31,8 @@ class RegisterActivity : ComponentActivity() {
                 ) {
                     RegisterScreen(
                         isLoading = state.isLoading,
-                        onRegisterClicked = { username, email, password ->
-                            model.handleRegister(username, email, password)
+                        onRegisterClicked = { displayName, username, email, password ->
+                            model.handleRegister(displayName, username, email, password)
                         },
                         onGoToLoginClicked = { finish() }
                     )

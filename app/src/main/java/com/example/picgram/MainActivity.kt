@@ -34,7 +34,10 @@ class MainActivity : ComponentActivity() {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
+                val isDarkMode = LocalGlassDark.current
                 FeedScreen(
+                    isDarkMode = isDarkMode,
+                    onDarkModeChanged = model::setDarkMode,
                     posts = state.posts,
                     isLoadingFeed = state.isLoadingFeed,
                     errorMessage = state.errorMessage,

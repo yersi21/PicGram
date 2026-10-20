@@ -48,7 +48,7 @@ class LoginViewModel(repositories: AppContainer) : ScreenViewModel(repositories)
                         authResult.username.ifBlank { cleanEmail.substringBefore("@") }
                     }
                     if (fetchedUsername.isBlank()) repositories.social.insertUser(
-                        authResult.accessToken, authResult.userId, cleanEmail, username, System.currentTimeMillis())
+                        authResult.accessToken, authResult.userId, cleanEmail, username, System.currentTimeMillis(), authResult.displayName)
                 }
 
                 // 3. Persistir sesion y navegar al feed

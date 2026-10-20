@@ -2,6 +2,7 @@ package com.example.picgram.presentation
 
 import com.example.picgram.*
 import com.example.picgram.data.AppContainer
+import com.example.picgram.data.model.ProfileNames
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -17,8 +18,12 @@ class RegisterViewModel(repositories: AppContainer) : ScreenViewModel(repositori
         get() = uiState.value.isLoading
         set(value) { mutableUiState.update { it.copy(isLoading = value) } }
 
-    fun handleRegister(username: String, email: String, password: String) {
+    fun handleRegister(displayName: String, username: String, email: String, password: String) {
         if (isLoading) return
+        val cleanName = try { ProfileNames.validatedName(displayName) } catch (error: IllegalArgumentException) {
+            notify(error.message ?: "Ingresa tu nombre")
+            return
+        }
         // Validaciones locales antes de llamar a la API
         if (username.trim().length < 3) {
             notify("El nombre de usuario debe tener al menos 3 caracteres")
@@ -44,7 +49,7 @@ class RegisterViewModel(repositories: AppContainer) : ScreenViewModel(repositori
 
                 run {
                     // 1. Crear cuenta en Supabase Auth
-                    authResult = repositories.auth.signUp(cleanEmail, password, cleanUsername)
+                    authResult = repositories.auth.signUp(cleanEmail, password, cleanUsername, cleanName)
                     accountCreated = true
 
                     // 2. Guardar perfil en public.users
@@ -53,7 +58,8 @@ class RegisterViewModel(repositories: AppContainer) : ScreenViewModel(repositori
                         id = authResult.userId,
                         email = cleanEmail,
                         username = cleanUsername,
-                        createdAt = System.currentTimeMillis()
+                        createdAt = System.currentTimeMillis(),
+                        displayName = cleanName
                     )
                 }
 

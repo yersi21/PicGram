@@ -16,11 +16,13 @@ class AppContainer(
     val session: SessionRepository,
     val media: MediaRepository,
     val drafts: DraftRepository,
-    val emailValidator: EmailValidator = AndroidEmailValidator
+    val emailValidator: EmailValidator = AndroidEmailValidator,
+    val theme: ThemeRepository = ThemeRepository()
 ) {
     constructor(context: Context) : this(SupabaseAuthRepository(), SupabaseSocialRepository(),
         LocalSessionRepository(context.applicationContext), StorageMediaRepository(context.applicationContext),
-        LocalDraftRepository(context.applicationContext))
+        LocalDraftRepository(context.applicationContext),
+        theme = ThemeRepository(AndroidThemePreferences(context.applicationContext)))
 }
 
 fun interface EmailValidator { fun isValid(email: String): Boolean }

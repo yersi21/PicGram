@@ -16,6 +16,13 @@ data class FeedUiState(
 class FeedViewModel(repositories: AppContainer) : ScreenViewModel(repositories) {
     private val mutableUiState = MutableStateFlow(FeedUiState())
     val uiState = mutableUiState.asStateFlow()
+    fun setDarkMode(enabled: Boolean) {
+        try {
+            repositories.theme.setDarkMode(enabled)
+        } catch (error: Exception) {
+            notify("No se pudo cambiar el tema: ${error.message}")
+        }
+    }
     private var posts: List<Post>
         get() = uiState.value.posts
         set(value) { mutableUiState.update { it.copy(posts = value) } }

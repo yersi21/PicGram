@@ -6,7 +6,7 @@ import com.example.picgram.data.*
 /** Strict fakes: an unexpected repository call fails instead of touching the network. */
 
 open class StubAuthRepository : AuthRepository {
-    override suspend fun signUp(email: String, password: String, username: String): AuthResult = error("Unexpected AuthRepository.signUp")
+    override suspend fun signUp(email: String, password: String, username: String, displayName: String): AuthResult = error("Unexpected AuthRepository.signUp")
     override suspend fun signIn(email: String, password: String): AuthResult = error("Unexpected AuthRepository.signIn")
     override suspend fun requestPasswordRecovery(email: String): Unit = error("Unexpected AuthRepository.requestPasswordRecovery")
     override suspend fun verifyRecoveryLink(link: RecoveryLink): AuthResult = error("Unexpected AuthRepository.verifyRecoveryLink")
@@ -17,7 +17,8 @@ open class StubAuthRepository : AuthRepository {
 }
 
 open class StubSocialRepository : SocialRepository {
-    override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long): Unit = error("Unexpected SocialRepository.insertUser")
+    override suspend fun getDisplayName(token: String, userId: String): String = error("Unexpected SocialRepository.getDisplayName")
+    override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String): Unit = error("Unexpected SocialRepository.insertUser")
     override suspend fun getUsername(token: String, userId: String): String = error("Unexpected SocialRepository.getUsername")
     override suspend fun getAvatarUrl(token: String, userId: String): String = error("Unexpected SocialRepository.getAvatarUrl")
     override suspend fun getAvatarUrls(token: String, userIds: List<String>): Map<String, String> = error("Unexpected SocialRepository.getAvatarUrls")

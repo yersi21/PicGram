@@ -80,11 +80,11 @@ object SupabaseAuth {
      *
      * @throws Exception si el correo ya existe o el registro falla.
      */
-    fun signUp(email: String, password: String, username: String): AuthResult {
+    fun signUp(email: String, password: String, username: String, displayName: String): AuthResult {
         val body = JSONObject().apply {
             put("email", email)
             put("password", password)
-            put("data", JSONObject().put("username", username))
+            put("data", JSONObject().put("username", username).put("display_name", displayName))
         }
         val response = post("/auth/v1/signup", body)
 
@@ -147,7 +147,8 @@ object SupabaseAuth {
             val user = authRequest("GET", "/auth/v1/user", token = link.accessToken)
             AuthResult(link.accessToken, user.getString("id"), user.getString("email"),
                 refreshToken = link.refreshToken,
-                username = user.optJSONObject("user_metadata")?.optString("username", "") ?: "")
+                username = user.optJSONObject("user_metadata")?.optString("username", "") ?: "",
+                displayName = user.optJSONObject("user_metadata")?.optString("display_name", "") ?: "")
         }
     }
 
@@ -173,7 +174,8 @@ object SupabaseAuth {
             refreshToken = refreshToken,
             expiresAt = response.optLong("expires_at",
                 System.currentTimeMillis() / 1000 + response.optLong("expires_in", 3600)),
-            username = user.optJSONObject("user_metadata")?.optString("username", "") ?: ""
+            username = user.optJSONObject("user_metadata")?.optString("username", "") ?: "",
+            displayName = user.optJSONObject("user_metadata")?.optString("display_name", "") ?: ""
         )
     }
 

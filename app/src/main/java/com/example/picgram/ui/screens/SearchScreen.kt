@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.picgram.ui.theme.*
 import kotlinx.coroutines.delay
@@ -71,7 +72,7 @@ fun SearchScreen(state: SearchUiState, onQueryChange: (String) -> Unit,
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .focusRequester(focusRequester),
-                placeholder = { Text("Buscar por nombre de usuario...") },
+                placeholder = { Text("Nombre o @usuario") },
                 leadingIcon = {
                     if (isSearching) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -91,6 +92,10 @@ fun SearchScreen(state: SearchUiState, onQueryChange: (String) -> Unit,
             )
 
             HorizontalDivider()
+            if (results.size >= 50) {
+                Text("Se muestran hasta 50 cuentas. Escribe más para precisar la búsqueda.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+            }
             searchError?.let { message ->
                 Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
             }
@@ -167,14 +172,18 @@ fun UserResultItem(user: UserProfile, onClick: () -> Unit) {
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = user.username,
+                text = user.displayName.ifBlank { user.username },
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
             )
+            Text("@${user.username}", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.width(12.dp))
         Icon(
             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
             contentDescription = null,

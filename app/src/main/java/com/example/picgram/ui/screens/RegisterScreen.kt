@@ -21,9 +21,10 @@ import com.example.picgram.presentation.*
 @Composable
 fun RegisterScreen(
     isLoading: Boolean,
-    onRegisterClicked: (username: String, email: String, password: String) -> Unit,
+    onRegisterClicked: (displayName: String, username: String, email: String, password: String) -> Unit,
     onGoToLoginClicked: () -> Unit
 ) {
+    var displayName by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var username by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var email by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -44,6 +45,19 @@ fun RegisterScreen(
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(bottom = 32.dp)
         )
+
+        OutlinedTextField(
+            colors = glassTextFieldColors(),
+            value = displayName,
+            onValueChange = { displayName = it },
+            label = { Text("Nombre") },
+            supportingText = { Text("Entre 2 y 80 caracteres") },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
             colors = glassTextFieldColors(),
@@ -97,7 +111,7 @@ fun RegisterScreen(
         Spacer(modifier = Modifier.height(24.dp))
 
         GlassButton(
-            onClick = { onRegisterClicked(username, email, password) },
+            onClick = { onRegisterClicked(displayName, username, email, password) },
             modifier = Modifier.fillMaxWidth(),
             enabled = !isLoading
         ) {

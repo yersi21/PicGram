@@ -29,7 +29,8 @@ data class UserProfile(
     val id: String = "",
     val username: String = "",
     val email: String = "",
-    val avatarUrl: String = ""
+    val avatarUrl: String = "",
+    val displayName: String = ""
 )
 
 data class UserSession(
@@ -47,5 +48,6 @@ data class AuthResult(
     val email: String,
     val refreshToken: String = "",
     val expiresAt: Long = 0L,
-    val username: String = ""
+    val username: String = "",
+    val displayName: String = ""
 )

@@ -4,7 +4,8 @@ import com.example.picgram.*
 import kotlinx.coroutines.*
 
 interface SocialRepository {
-    suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long): Unit
+    suspend fun getDisplayName(token: String, userId: String): String
+    suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String): Unit
     suspend fun getUsername(token: String, userId: String): String
     suspend fun getAvatarUrl(token: String, userId: String): String
     suspend fun getAvatarUrls(token: String, userIds: List<String>): Map<String, String>
@@ -27,7 +28,8 @@ interface SocialRepository {
 }
 
 class SupabaseSocialRepository(private val io: CoroutineDispatcher = Dispatchers.IO) : SocialRepository {
-    override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long): Unit = withContext(io) { SupabaseDatabase.insertUser(token, id, email, username, createdAt) }
+    override suspend fun getDisplayName(token: String, userId: String): String = withContext(io) { SupabaseDatabase.getDisplayName(token, userId) }
+    override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String): Unit = withContext(io) { SupabaseDatabase.insertUser(token, id, email, username, createdAt, displayName) }
     override suspend fun getUsername(token: String, userId: String): String = withContext(io) { SupabaseDatabase.getUsername(token, userId) }
     override suspend fun getAvatarUrl(token: String, userId: String): String = withContext(io) { SupabaseDatabase.getAvatarUrl(token, userId) }
     override suspend fun getAvatarUrls(token: String, userIds: List<String>): Map<String, String> = withContext(io) { SupabaseDatabase.getAvatarUrls(token, userIds) }

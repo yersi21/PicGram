@@ -32,10 +32,23 @@ class ViewModelTest {
         override suspend fun remove(userId: String) { stored.remove(userId) }
     }
     private fun container(social: SocialRepository = StubSocialRepository(), auth: AuthRepository = StubAuthRepository(),
-        session: SessionRepository = MemorySession(account), drafts: DraftRepository = MemoryDrafts()) = AppContainer(
+        session: SessionRepository = MemorySession(account), drafts: DraftRepository = MemoryDrafts(),
+        theme: ThemeRepository = ThemeRepository()) = AppContainer(
         auth, social, session, object : StubMediaRepository() {
             override suspend fun flushCleanup(session: UserSession) {}
-        }, drafts, EmailValidator { it.contains('@') })
+        }, drafts, EmailValidator { it.contains('@') }, theme)
+
+    @Test fun feedChangesAppearanceWithoutCallingNetworkOrReloadingPosts() = runTest {
+        val theme = ThemeRepository()
+        val model = FeedViewModel(container(theme = theme))
+        val originalFeed = model.uiState.value
+        model.setDarkMode(true)
+        assertEquals(true, theme.darkMode.value)
+        model.setDarkMode(false)
+        assertEquals(false, theme.darkMode.value)
+        assertEquals(originalFeed, model.uiState.value)
+        assertTrue(model.notices.value.isEmpty())
+    }
 
     @Test fun loginUsesTheProfileFallbackAndPersistsTheCompleteSession() = runTest {
         val local = MemorySession(null)
@@ -43,12 +56,13 @@ class ViewModelTest {
         val model = LoginViewModel(container(session = local, auth = object : StubAuthRepository() {
             override suspend fun signIn(email: String, password: String): AuthResult {
                 assertEquals("ana@example.test", email)
-                return AuthResult("new-jwt", "ana", email, "refresh", 12345L, "Ana")
+                return AuthResult("new-jwt", "ana", email, "refresh", 12345L, "Ana", "Ana López")
             }
         }, social = object : StubSocialRepository() {
             override suspend fun getUsername(token: String, userId: String) = ""
-            override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long) {
+            override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String) {
                 createdUsername = username
+                assertEquals("Ana López", displayName)
             }
         }))
         model.handleLogin(" ana@example.test ", "password"); advanceUntilIdle()
@@ -61,13 +75,13 @@ class ViewModelTest {
     @Test fun registerFailureAfterCreatingAccountDoesNotPersistAnIncompleteSession() = runTest {
         val local = MemorySession(null)
         val model = RegisterViewModel(container(session = local, auth = object : StubAuthRepository() {
-            override suspend fun signUp(email: String, password: String, username: String) = AuthResult("jwt", "ana", email)
+            override suspend fun signUp(email: String, password: String, username: String, displayName: String) = AuthResult("jwt", "ana", email)
         }, social = object : StubSocialRepository() {
-            override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long) {
+            override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String) {
                 throw IOException("offline")
             }
         }))
-        model.handleRegister("Ana", "ana@example.test", "password"); advanceUntilIdle()
+        model.handleRegister("Ana López", "Ana", "ana@example.test", "password"); advanceUntilIdle()
         assertNull(local.account)
         assertFalse(model.uiState.value.isLoading)
         assertTrue(model.notices.value.single().message!!.contains("Tu cuenta se creo"))
@@ -111,6 +125,7 @@ class ViewModelTest {
 
     @Test fun failedFollowRollsBackTheFollowingFlagAndFollowerCount() = runTest {
         val model = ProfileViewModel(container(social = object : StubSocialRepository() {
+            override suspend fun getDisplayName(token: String, userId: String) = "Ana López"
             override suspend fun getUserPosts(token: String, userId: String) = emptyList<Post>()
             override suspend fun getAvatarUrl(token: String, userId: String) = ""
             override suspend fun isFollowing(token: String, followerId: String, followingId: String) = false
@@ -206,6 +221,123 @@ class ViewModelTest {
         model.search("")
         assertTrue(model.uiState.value.results.isEmpty())
         assertFalse(model.uiState.value.hasSearched)
+    }
+
+    @Test fun searchNormalizesHandlesAndPreservesLiteralPunctuation() = runTest {
+        val queries = mutableListOf<String>()
+        val expected = UserProfile(id = "selected-id", username = "ana_test", displayName = "Ana López")
+        val model = SearchViewModel(container(social = object : StubSocialRepository() {
+            override suspend fun searchUsers(token: String, query: String): List<UserProfile> {
+                queries += query
+                return listOf(expected)
+            }
+        }))
+        model.search("  @ana_test  "); advanceUntilIdle()
+        assertEquals(listOf("ana_test"), queries)
+        assertEquals(expected, model.uiState.value.results.single())
+        model.search("O'Brien%,(x)")
+        assertTrue(model.uiState.value.results.isEmpty())
+        advanceUntilIdle()
+        assertEquals("O'Brien%,(x)", queries.last())
+        model.search(" @ "); advanceUntilIdle()
+        assertFalse(model.uiState.value.isSearching)
+        assertTrue(model.uiState.value.results.isEmpty())
+        assertEquals(2, queries.size)
+    }
+
+    @Test fun searchRejectsExcessiveQueryWithoutCallingRepository() = runTest {
+        val model = SearchViewModel(container())
+        model.search("a".repeat(81)); advanceUntilIdle()
+        assertNotNull(model.uiState.value.searchError)
+        assertFalse(model.uiState.value.isSearching)
+    }
+
+    @Test fun searchNeverPublishesAnOldNonCancellableResponse() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val model = SearchViewModel(container(social = object : StubSocialRepository() {
+            override suspend fun searchUsers(token: String, query: String): List<UserProfile> {
+                if (query == "old") withContext(NonCancellable) { gate.await() }
+                return listOf(UserProfile(id = query, username = query))
+            }
+        }))
+        model.search("old"); advanceTimeBy(400); runCurrent()
+        model.search("new"); advanceTimeBy(400); runCurrent()
+        assertEquals("new", model.uiState.value.results.single().id)
+        gate.complete(Unit); advanceUntilIdle()
+        assertEquals("new", model.uiState.value.results.single().id)
+    }
+
+    @Test fun searchFailureIsVisibleAndCanBeRetried() = runTest {
+        var attempts = 0
+        val model = SearchViewModel(container(social = object : StubSocialRepository() {
+            override suspend fun searchUsers(token: String, query: String): List<UserProfile> {
+                if (++attempts == 1) throw IOException("offline")
+                return listOf(UserProfile(id = "ana", username = "ana"))
+            }
+        }))
+        model.search("Ana"); advanceUntilIdle()
+        assertNotNull(model.uiState.value.searchError)
+        assertFalse(model.uiState.value.isSearching)
+        model.search(); advanceUntilIdle()
+        assertNull(model.uiState.value.searchError)
+        assertEquals("ana", model.uiState.value.results.single().id)
+    }
+
+    private fun profileRepository() = object : StubSocialRepository() {
+        override suspend fun getDisplayName(token: String, userId: String) = "Ana López"
+        override suspend fun getAvatarUrl(token: String, userId: String) = ""
+        override suspend fun getUserPosts(token: String, userId: String) = listOf(post.copy(userId = userId))
+        override suspend fun isFollowing(token: String, followerId: String, followingId: String) = false
+        override suspend fun getFollowersCount(token: String, userId: String) = 0
+        override suspend fun getFollowingCount(token: String, userId: String) = 0
+    }
+
+    @Test fun selectedProfileLoadsNameAndPostsByAccountId() = runTest {
+        val model = ProfileViewModel(container(social = profileRepository()))
+        model.initialize("selected-id"); advanceUntilIdle()
+        assertEquals("Ana López", model.uiState.value.displayName)
+        assertEquals("selected-id", model.uiState.value.posts.single().userId)
+        assertFalse(model.uiState.value.isOwnProfile)
+    }
+
+    @Test fun registerRequiresNameBeforeCreatingAnAccount() = runTest {
+        val model = RegisterViewModel(container())
+        for (name in listOf("", " ", "A", "a".repeat(81), "Ana\nMaría")) {
+            model.handleRegister(name, "ana_test", "ana@example.test", "password")
+            advanceUntilIdle()
+            assertFalse(model.uiState.value.isLoading)
+        }
+        assertEquals(5, model.notices.value.size)
+    }
+
+    @Test fun registerSendsSeparateTrimmedNamesToAuthAndProfileAndPreventsRepeatSending() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        var profileName = ""
+        val local = MemorySession(null)
+        val model = RegisterViewModel(container(session = local, auth = object : StubAuthRepository() {
+            override suspend fun signUp(email: String, password: String, username: String, displayName: String): AuthResult {
+                calls++
+                assertEquals("Ana María", displayName)
+                assertEquals("ana_test", username)
+                assertEquals("ana@example.test", email)
+                gate.await()
+                return AuthResult("jwt", "ana", email)
+            }
+        }, social = object : StubSocialRepository() {
+            override suspend fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String) {
+                assertEquals("ana_test", username)
+                profileName = displayName
+            }
+        }))
+        model.handleRegister("  Ana María  ", " ana_test ", " ana@example.test ", "password")
+        model.handleRegister("Otro nombre", "otro", "otro@example.test", "password"); runCurrent()
+        assertEquals(1, calls)
+        assertTrue(model.uiState.value.isLoading)
+        gate.complete(Unit); advanceUntilIdle()
+        assertEquals("Ana María", profileName)
+        assertEquals("ana_test", local.account?.username)
+        assertEquals(Destination.FEED, model.notices.value.last().destination)
     }
 
     @Test fun connectionsPreventOverlappingLoadsAndAllowRetryAfterFailure() = runTest {

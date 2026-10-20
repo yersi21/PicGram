@@ -38,6 +38,7 @@ class UserProfileActivity : ComponentActivity() {
             PicGramTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     UserProfileScreen(
+                        displayName = state.displayName,
                         username          = username,
                         posts             = state.posts,
                         isLoading         = state.isLoading,

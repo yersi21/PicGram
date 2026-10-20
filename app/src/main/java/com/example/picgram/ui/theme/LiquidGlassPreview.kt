@@ -23,6 +23,7 @@ private fun GlassLoginDarkPreview() {
 private fun GlassFeedPreview() {
     PicGramTheme(darkTheme = true) {
         FeedScreen(
+            isDarkMode = true, onDarkModeChanged = {},
             posts = listOf(Post(id = "preview", userId = "author", username = "Mariana",
                 caption = "Momentos que vale la pena compartir.", likesCount = 24, commentsCount = 3),
                 Post(id = "preview-2", userId = "author-2", username = "Diego",

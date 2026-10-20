@@ -4,7 +4,7 @@ import com.example.picgram.*
 import kotlinx.coroutines.*
 
 interface AuthRepository {
-    suspend fun signUp(email: String, password: String, username: String): AuthResult
+    suspend fun signUp(email: String, password: String, username: String, displayName: String): AuthResult
     suspend fun signIn(email: String, password: String): AuthResult
     suspend fun requestPasswordRecovery(email: String): Unit
     suspend fun verifyRecoveryLink(link: RecoveryLink): AuthResult
@@ -15,7 +15,7 @@ interface AuthRepository {
 }
 
 class SupabaseAuthRepository(private val io: CoroutineDispatcher = Dispatchers.IO) : AuthRepository {
-    override suspend fun signUp(email: String, password: String, username: String): AuthResult = withContext(io) { SupabaseAuth.signUp(email, password, username) }
+    override suspend fun signUp(email: String, password: String, username: String, displayName: String): AuthResult = withContext(io) { SupabaseAuth.signUp(email, password, username, displayName) }
     override suspend fun signIn(email: String, password: String): AuthResult = withContext(io) { SupabaseAuth.signIn(email, password) }
     override suspend fun requestPasswordRecovery(email: String): Unit = withContext(io) { SupabaseAuth.requestPasswordRecovery(email) }
     override suspend fun verifyRecoveryLink(link: RecoveryLink): AuthResult = withContext(io) { SupabaseAuth.verifyRecoveryLink(link) }

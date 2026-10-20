@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 data class ProfileUiState(
+    val displayName: String = "",
     val posts: List<Post> = emptyList(),
     val isLoading: Boolean = true,
     val isFollowing: Boolean = false,
@@ -69,9 +70,22 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
         profileUserId = userId
         val session = repositories.session.currentSession() ?: run { navigate(Destination.CLOSE); return }
         isOwnProfile = session.userId == userId
+        loadDisplayName(session.accessToken, userId)
         reloadAvatar(session.accessToken, userId)
         loadProfileData(session.accessToken, session.userId, userId)
     }
+    private fun loadDisplayName(token: String, userId: String) {
+        viewModelScope.launch {
+            try {
+                val name = repositories.social.getDisplayName(token, userId)
+                mutableUiState.update { it.copy(displayName = name) }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (!handleSessionError(error)) notify("No se pudo cargar el nombre. Verifica la migración 003: ${error.message}")
+            }
+        }
+    }
+
     fun refresh() {
         val s = repositories.session.currentSession() ?: return
         if (isLoading) return

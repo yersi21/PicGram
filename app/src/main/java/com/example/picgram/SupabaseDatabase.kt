@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
+import com.example.picgram.data.model.ProfileNames
 
 /** Blocking REST operations. Always call from Dispatchers.IO. */
 object SupabaseDatabase {
@@ -56,8 +56,10 @@ object SupabaseDatabase {
         id = obj.getString("id"), postId = obj.getString("post_id"), userId = obj.getString("user_id"),
         username = obj.stringOrEmpty("username"), content = obj.getString("content"), timestamp = obj.optLong("timestamp"))
 
-    fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long) {
-        val body = JSONObject().put("id", id).put("email", email).put("username", username).put("created_at", createdAt)
+    fun insertUser(token: String, id: String, email: String, username: String, createdAt: Long, displayName: String) {
+        val name = if (displayName.isBlank()) "" else ProfileNames.validatedName(displayName)
+        val body = JSONObject().put("id", id).put("email", email).put("username", username)
+            .put("created_at", createdAt).put("display_name", name)
         request("POST", "/rest/v1/users?on_conflict=id", token, body,
             "resolution=ignore-duplicates,return=minimal")
     }
@@ -65,6 +67,11 @@ object SupabaseDatabase {
     fun getUsername(token: String, userId: String): String {
         val result = JSONArray(request("GET", "/rest/v1/users?id=eq.$userId&select=username", token))
         return if (result.length() == 0) "" else result.getJSONObject(0).stringOrEmpty("username")
+    }
+
+    fun getDisplayName(token: String, userId: String): String {
+        val result = JSONArray(request("GET", "/rest/v1/users?id=eq.$userId&select=display_name", token))
+        return if (result.length() == 0) "" else result.getJSONObject(0).stringOrEmpty("display_name")
     }
 
     fun getAvatarUrl(token: String, userId: String): String {
@@ -170,12 +177,16 @@ object SupabaseDatabase {
     }
 
     fun searchUsers(token: String, query: String): List<UserProfile> {
-        if (query.isBlank()) return emptyList()
-        val pattern = URLEncoder.encode("%${query.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%", "UTF-8")
-        val result = JSONArray(request("GET", "/rest/v1/users?username=ilike.$pattern&select=id,username,avatar_url&order=username,id&limit=20", token))
+        val term = ProfileNames.searchTerm(query)
+        if (term.isBlank()) return emptyList()
+        require(term.length <= ProfileNames.MAX_LENGTH) { "La búsqueda admite hasta 80 caracteres." }
+        // JSON parameters, not interpolated PostgREST filters: punctuation is literal.
+        val result = JSONArray(request("POST", "/rest/v1/rpc/picgram_search_users", token,
+            JSONObject().put("query_text", term)))
         return (0 until result.length()).map { index ->
             val obj = result.getJSONObject(index)
-            UserProfile(id = obj.getString("id"), username = obj.stringOrEmpty("username"), avatarUrl = obj.stringOrEmpty("avatar_url"))
+            UserProfile(id = obj.getString("id"), username = obj.stringOrEmpty("username"),
+                avatarUrl = obj.stringOrEmpty("avatar_url"), displayName = obj.stringOrEmpty("display_name"))
         }
     }
 
