@@ -32,6 +32,12 @@ import com.example.picgram.presentation.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UserProfileScreen(
+    bio: String,
+    isPrivate: Boolean,
+    followRequested: Boolean,
+    onEditProfile: () -> Unit,
+    onMessage: () -> Unit,
+    displayName: String,
     username: String,
     posts: List<Post>,
     isLoading: Boolean,
@@ -94,7 +100,17 @@ fun UserProfileScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             item(span = { GridItemSpan(3) }) {
+                Column {
+                if (bio.isNotBlank()) Text(bio, modifier = Modifier.padding(16.dp))
+                if (isPrivate) Text("Cuenta privada", modifier = Modifier.padding(horizontal = 16.dp))
+                if (isOwnProfile) {
+                    TextButton(onClick = onEditProfile) { Text("Editar perfil y privacidad") }
+                } else {
+                    TextButton(onClick = onMessage) { Text("Enviar mensaje") }
+                }
                 ProfileHeader(
+                    followRequested = followRequested,
+                    displayName = displayName,
                     username          = username,
                     postCount         = posts.size,
                     followersCount    = followersCount,
@@ -113,6 +129,7 @@ fun UserProfileScreen(
                     onFollowersClicked = onFollowersClicked,
                     onFollowingClicked = onFollowingClicked
                 )
+                }
             }
 
             item(span = { GridItemSpan(3) }) {
@@ -142,7 +159,7 @@ fun UserProfileScreen(
                 item(span = { GridItemSpan(3) }) {
                     Box(modifier = Modifier.fillMaxWidth().padding(48.dp),
                         contentAlignment = Alignment.Center) {
-                        Text("Sin publicaciones aun",
+                        Text(if (isPrivate && !isOwnProfile && !isFollowing) "Sigue esta cuenta para ver sus publicaciones" else "Sin publicaciones aun",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center)
@@ -159,6 +176,8 @@ fun UserProfileScreen(
 
 @Composable
 fun ProfileHeader(
+    followRequested: Boolean,
+    displayName: String,
     username: String,
     postCount: Int,
     followersCount: Int,
@@ -244,7 +263,10 @@ fun ProfileHeader(
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-        Text(username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(displayName.ifBlank { username }, style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text("@$username", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -274,7 +296,7 @@ fun ProfileHeader(
                             strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Spacer(modifier = Modifier.width(8.dp))
                     }
-                    Text("Seguir", fontWeight = FontWeight.SemiBold)
+                    Text(if (followRequested) "Solicitud enviada · Cancelar" else "Seguir", fontWeight = FontWeight.SemiBold)
                 }
             }
         }

@@ -5,6 +5,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.example.picgram.ui.screens.FeedScreen
 import com.example.picgram.ui.screens.LoginScreen
 import com.example.picgram.Post
+import com.example.picgram.data.model.Story
+import com.example.picgram.data.model.monotonicMillis
+import com.example.picgram.ui.FeedNavigation
+import com.example.picgram.ui.FeedNotificationAction
+import com.example.picgram.ui.screens.StoriesStrip
 
 @Preview(name = "Liquid Glass - Acceso claro", widthDp = 412, heightDp = 860)
 @Composable
@@ -21,8 +26,23 @@ private fun GlassLoginDarkPreview() {
 @Preview(name = "Liquid Glass - Feed oscuro", widthDp = 412, heightDp = 860)
 @Composable
 private fun GlassFeedPreview() {
-    PicGramTheme(darkTheme = true) {
+    FeedPreviewContent(true)
+}
+
+@Preview(name = "Feed claro", widthDp = 360, heightDp = 800)
+@Composable
+private fun FeedLightPreview() { FeedPreviewContent(false) }
+
+@Composable
+private fun FeedPreviewContent(dark: Boolean) {
+    PicGramTheme(darkTheme = dark) {
         FeedScreen(
+            isDarkMode = dark, onDarkModeChanged = {},
+            storiesHeader = { StoriesStrip(listOf(
+                Story("1", "ana", "", "image", monotonicMillis() + 60_000, "ana"),
+                Story("2", "luis", "", "image", monotonicMillis() + 60_000, "luis")), "me", "yo", "", {}) },
+            communityActions = { FeedNavigation(3L, "yo", "", {}, {}, {}, {}) },
+            notificationAction = { FeedNotificationAction(2L, {}) },
             posts = listOf(Post(id = "preview", userId = "author", username = "Mariana",
                 caption = "Momentos que vale la pena compartir.", likesCount = 24, commentsCount = 3),
                 Post(id = "preview-2", userId = "author-2", username = "Diego",

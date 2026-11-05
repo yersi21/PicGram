@@ -16,11 +16,15 @@ class AppContainer(
     val session: SessionRepository,
     val media: MediaRepository,
     val drafts: DraftRepository,
-    val emailValidator: EmailValidator = AndroidEmailValidator
+    val emailValidator: EmailValidator = AndroidEmailValidator,
+    val theme: ThemeRepository = ThemeRepository(),
+    val community: CommunityRepository = SupabaseCommunityRepository(),
+    val realtime: RealtimeSource = SupabaseRealtimeSource()
 ) {
     constructor(context: Context) : this(SupabaseAuthRepository(), SupabaseSocialRepository(),
         LocalSessionRepository(context.applicationContext), StorageMediaRepository(context.applicationContext),
-        LocalDraftRepository(context.applicationContext))
+        LocalDraftRepository(context.applicationContext),
+        theme = ThemeRepository(AndroidThemePreferences(context.applicationContext)))
 }
 
 fun interface EmailValidator { fun isValid(email: String): Boolean }
@@ -28,8 +32,10 @@ object AndroidEmailValidator : EmailValidator {
     override fun isValid(email: String) = android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
 }
 
-class PicGramApplication : Application() {
+class PicGramApplication : Application(), coil.ImageLoaderFactory {
     val container by lazy { AppContainer(this) }
+    override fun newImageLoader() = PrivateMedia.imageLoader(this)
+    override fun onCreate() { super.onCreate(); PushManager.initialize(this) }
 }
 
 interface SessionRepository {
@@ -43,11 +49,16 @@ class LocalSessionRepository(private val context: Context,
     private val io: CoroutineDispatcher = Dispatchers.IO) : SessionRepository {
     override fun currentSession() = SessionManager.currentSession(context)
     override fun saveSession(session: UserSession) = SessionManager.saveSession(context, session)
-    override fun clearSession() = SessionManager.clearSession(context)
+    override fun clearSession() {
+        PushManager.detach(context)
+        SessionManager.clearSession(context)
+        context.getSystemService(android.app.NotificationManager::class.java).cancelAll()
+    }
     override suspend fun validAccessToken(token: String) = withContext(io) { SessionManager.validAccessToken(token) }
 }
 
 interface MediaRepository {
+    suspend fun uploadStoryMedia(uri: Uri, session: UserSession): Pair<String, String>
     suspend fun uploadPostMedia(uri: Uri, session: UserSession): Pair<String, String>
     suspend fun uploadProfilePhoto(uri: Uri, session: UserSession): String
     fun extractPath(url: String): String?
@@ -59,6 +70,11 @@ interface MediaRepository {
 
 class StorageMediaRepository(private val context: Context,
     private val io: CoroutineDispatcher = Dispatchers.IO) : MediaRepository {
+    override suspend fun uploadStoryMedia(uri: Uri, session: UserSession) = withContext(io) {
+        val prepared = MediaFiles.prepare(context, uri)
+        try { SupabaseStorage.upload("stories/${session.userId}/${java.util.UUID.randomUUID()}.${prepared.extension}", prepared, session.accessToken) to prepared.mediaType }
+        finally { prepared.file.delete() }
+    }
     override suspend fun uploadPostMedia(uri: Uri, session: UserSession) = withContext(io) {
         val prepared = MediaFiles.prepare(context, uri)
         try {

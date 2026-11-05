@@ -16,8 +16,20 @@ import java.util.*
 
 import com.example.picgram.presentation.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.awaitCancellation
+import android.os.Build
+import android.Manifest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.unit.dp
+import com.example.picgram.data.PushManager
 
 class MainActivity : ComponentActivity() {
+    private val community by lazy { screenViewModel { CommunityViewModel(it) } }
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { PushManager.register(this) }
     private val model by lazy { screenViewModel { FeedViewModel(it) } }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,11 +42,41 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         model.initialize()
+        if (PushManager.configured && Build.VERSION.SDK_INT >= 33 && !PushManager.permissionAsked(this)) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        PushManager.register(this)
+        lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) {
+            community.start(CommunityPage.HOME)
+            try { awaitCancellation() } finally { community.stop() }
+        } }
         setContent {
             ObserveNotices(model)
+            ObserveNotices(community)
             val state by model.uiState.collectAsStateWithLifecycle()
+            val activity by community.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
+                val isDarkMode = LocalGlassDark.current
                 FeedScreen(
+                    isDarkMode = isDarkMode,
+                    onDarkModeChanged = model::setDarkMode,
+                    storiesHeader = {
+                        activity.error?.let { Text("Historias y actividad: $it", modifier = androidx.compose.ui.Modifier.padding(8.dp), color = MaterialTheme.colorScheme.error) }
+                        StoriesStrip(activity.stories, session.userId, session.username, state.currentAvatarUrl) { openCommunity(CommunityPage.CREATE_STORY) }
+                    },
+                    communityActions = {
+                        FeedNavigation(
+                            unreadMessages = activity.unreadMessageCount,
+                            username = session.username, avatarUrl = state.currentAvatarUrl,
+                            onHome = { model.refresh() },
+                            onMessages = { openCommunity(CommunityPage.CONVERSATIONS) },
+                            onSearch = { startActivity(Intent(this, SearchActivity::class.java)) },
+                            onProfile = { openUserProfile(session.userId, session.username) }
+                        )
+                    },
+                    notificationAction = {
+                        FeedNotificationAction(activity.unreadNotificationCount) { openCommunity(CommunityPage.NOTIFICATIONS) }
+                    },
                     posts = state.posts,
                     isLoadingFeed = state.isLoadingFeed,
                     errorMessage = state.errorMessage,

@@ -38,6 +38,12 @@ class UserProfileActivity : ComponentActivity() {
             PicGramTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     UserProfileScreen(
+                        bio = state.bio,
+                        isPrivate = state.isPrivate,
+                        followRequested = state.followRequested,
+                        onEditProfile = { openCommunity(com.example.picgram.presentation.CommunityPage.EDIT_PROFILE) },
+                        onMessage = { openCommunity(com.example.picgram.presentation.CommunityPage.CHAT, profileUserId, username) },
+                        displayName = state.displayName,
                         username          = username,
                         posts             = state.posts,
                         isLoading         = state.isLoading,

@@ -3,11 +3,16 @@ package com.example.picgram.presentation
 import android.net.Uri
 import com.example.picgram.*
 import com.example.picgram.data.AppContainer
+import com.example.picgram.data.model.FollowStatus
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 data class ProfileUiState(
+    val displayName: String = "",
+    val bio: String = "",
+    val isPrivate: Boolean = false,
+    val followRequested: Boolean = false,
     val posts: List<Post> = emptyList(),
     val isLoading: Boolean = true,
     val isFollowing: Boolean = false,
@@ -61,6 +66,8 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
     private var avatarReloadJob: kotlinx.coroutines.Job? = null
 
     private var profileUserId: String = ""
+    private var metadataRevision = 0
+    private var postsRevision = 0
 
     private var initialized = false
     fun initialize(userId: String) {
@@ -69,19 +76,39 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
         profileUserId = userId
         val session = repositories.session.currentSession() ?: run { navigate(Destination.CLOSE); return }
         isOwnProfile = session.userId == userId
+        loadDisplayName(session.accessToken, userId)
         reloadAvatar(session.accessToken, userId)
         loadProfileData(session.accessToken, session.userId, userId)
     }
+    private fun loadDisplayName(token: String, userId: String) {
+        val revision = ++metadataRevision
+        viewModelScope.launch {
+            try {
+                val details = repositories.community.profile(token, userId, isOwnProfile)
+                val me = repositories.session.currentSession()?.userId ?: return@launch
+                val status = if (isOwnProfile) FollowStatus.NONE else repositories.community.followStatus(token, me, userId)
+                if (revision != metadataRevision) return@launch
+                mutableUiState.update { it.copy(displayName = details.name, bio = details.bio,
+                    isPrivate = details.isPrivate, followRequested = status == FollowStatus.REQUESTED) }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (revision != metadataRevision) return@launch
+                if (!handleSessionError(error)) notify("No se pudo cargar el perfil: ${error.message}")
+            }
+        }
+    }
+
     fun refresh() {
         val s = repositories.session.currentSession() ?: return
         if (isLoading) return
-        if (isOwnProfile) {
-            reloadOwnPosts(s.accessToken)
-            reloadAvatar(s.accessToken, profileUserId)   // Recargar avatar al volver
-        }
+        loadDisplayName(s.accessToken, profileUserId)
+        posts = emptyList()
+        reloadOwnPosts(s.accessToken)
+        reloadAvatar(s.accessToken, profileUserId)
         refreshCounters(s.accessToken, s.userId, profileUserId)
     }
     fun loadProfileData(token: String, currentUserId: String, targetUserId: String) {
+        val revision = ++postsRevision
         viewModelScope.launch {
             isLoading = true
             try {
@@ -92,6 +119,7 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
                     val fwc = repositories.social.getFollowingCount(token, targetUserId)
                     Data5(p, f, fc, fwc, "")   // Avatar se carga por separado
                 }
+                if (revision != postsRevision) return@launch
                 posts          = result.a
                 isFollowing    = result.b
                 followersCount = result.c
@@ -101,7 +129,7 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
                 if (handleSessionError(e)) return@launch
                 notify("Error al cargar perfil: ${e.message}")
             } finally {
-                isLoading = false
+                if (revision == postsRevision) isLoading = false
             }
         }
     }
@@ -128,11 +156,13 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
     }
 
     fun reloadOwnPosts(token: String) {
+        val revision = ++postsRevision
         viewModelScope.launch {
             try {
-                posts = run {
+                val loaded = run {
                     repositories.social.getUserPosts(token, profileUserId)
                 }
+                if (revision == postsRevision) posts = loaded
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (handleSessionError(e)) return@launch
@@ -263,22 +293,19 @@ class ProfileViewModel(repositories: AppContainer) : ScreenViewModel(repositorie
     fun handleFollowToggle(token: String, currentUserId: String, targetUserId: String) {
         if (isLoading || isTogglingFollow || isOwnProfile) return
         isTogglingFollow = true
-        val wasFollowing = isFollowing
-        isFollowing    = !wasFollowing
-        followersCount = if (wasFollowing) (followersCount - 1).coerceAtLeast(0) else followersCount + 1
+        metadataRevision++
+        val cancel = isFollowing || uiState.value.followRequested
 
         viewModelScope.launch {
             try {
-                run {
-                    if (wasFollowing) repositories.social.unfollowUser(token, currentUserId, targetUserId)
-                    else              repositories.social.followUser(token, currentUserId, targetUserId)
-                }
+                val status = repositories.community.follow(token, targetUserId, cancel)
+                if (status != FollowStatus.FOLLOWING && uiState.value.isPrivate) posts = emptyList()
+                isFollowing = status == FollowStatus.FOLLOWING
+                mutableUiState.update { it.copy(followRequested = status == FollowStatus.REQUESTED) }
+                loadProfileData(token, currentUserId, targetUserId)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (handleSessionError(e)) return@launch
-                isFollowing    = wasFollowing
-                followersCount = if (wasFollowing) followersCount + 1
-                                 else (followersCount - 1).coerceAtLeast(0)
                 notify("Error: ${e.message}")
             } finally {
                 isTogglingFollow = false
