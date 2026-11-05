@@ -12,6 +12,9 @@ local.properties
 /build
 /app/build/
 /.cleanup-backups/
+/supabase/.env*
+/supabase/functions/.env*
+*.service-account.json
 /captures
 .externalNativeBuild
 .cxx

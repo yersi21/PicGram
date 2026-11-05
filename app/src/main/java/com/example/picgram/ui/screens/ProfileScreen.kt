@@ -32,7 +32,6 @@ import com.example.picgram.presentation.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UserProfileScreen(
-    displayName: String,
     username: String,
     posts: List<Post>,
     isLoading: Boolean,
@@ -96,7 +95,6 @@ fun UserProfileScreen(
         ) {
             item(span = { GridItemSpan(3) }) {
                 ProfileHeader(
-                    displayName = displayName,
                     username          = username,
                     postCount         = posts.size,
                     followersCount    = followersCount,
@@ -161,7 +159,6 @@ fun UserProfileScreen(
 
 @Composable
 fun ProfileHeader(
-    displayName: String,
     username: String,
     postCount: Int,
     followersCount: Int,
@@ -247,10 +244,7 @@ fun ProfileHeader(
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-        Text(displayName.ifBlank { username }, style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-        Text("@$username", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {

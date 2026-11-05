@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.*
 import java.util.UUID
 
 data class PostDetailUiState(
+    val authorName: String = "",
     val likesCount: Int = 0,
     val likedByMe: Boolean = false,
     val comments: List<Comment> = emptyList(),
@@ -83,6 +84,8 @@ class PostDetailViewModel(repositories: AppContainer) : ScreenViewModel(reposito
         avatarRefreshJob?.cancel()
         avatarRefreshJob = viewModelScope.launch {
             try {
+                val profile = repositories.community.profile(session.accessToken, authorId, false)
+                mutableUiState.update { it.copy(authorName = profile.name) }
                 val avatars = run { repositories.social.getAvatarUrls(session.accessToken, userIds) }
                 avatars[authorId]?.let { authorAvatarUrl = it }
                 avatars[session.userId]?.let { currentAvatarUrl = it }
@@ -99,6 +102,8 @@ class PostDetailViewModel(repositories: AppContainer) : ScreenViewModel(reposito
         viewModelScope.launch {
             isLoadingDetail = true
             try {
+                val profile = repositories.community.profile(token, authorId, false)
+                mutableUiState.update { it.copy(authorName = profile.name) }
                 val likesResult: Pair<Int, Boolean>
                 val loadedComments: List<Comment>
                 val avatars: Map<String, String>

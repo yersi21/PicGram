@@ -1,5 +1,11 @@
 # Configuracion de PicGram
 
+Para RF-05, RF-09, RF-19–23 y RF-27, consultar primero
+[`docs/community-release.md`](../docs/community-release.md): migraciones nuevas
+005–008, cambio a almacenamiento privado, Realtime y entrega push. Es una
+actualización coordinada de servidor y APK; no volver a ejecutar 001 por rutina.
+Las secciones siguientes describen la configuración histórica previa a 005.
+
 La app necesita `SUPABASE_URL` y una clave **anon/publishable** en `local.properties`.
 BuildConfig se incluye en el APK: nunca usar una clave service_role o secret.
 

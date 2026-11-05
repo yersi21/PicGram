@@ -1,0 +1,3 @@
+[functions.deliver-push]
+# The endpoint checks a dedicated webhook secret before using service credentials.
+verify_jwt = false

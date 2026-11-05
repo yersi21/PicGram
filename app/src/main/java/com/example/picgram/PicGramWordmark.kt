@@ -15,13 +15,13 @@ import androidx.compose.ui.unit.dp
 
 /** Flat pure-black lettering on transparency, without reflections or a backing panel. */
 @Composable
-fun PicGramWordmark(modifier: Modifier = Modifier, compact: Boolean = false) {
+fun PicGramWordmark(modifier: Modifier = Modifier, compact: Boolean = false, tint: Color = Color.Black) {
     Box(
         modifier = modifier.padding(horizontal = if (compact) 6.dp else 8.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center
     ) {
         Image(painter = painterResource(R.drawable.picgram_wordmark_flat_black),
             contentDescription = "PicGram", modifier = Modifier.fillMaxSize(),
-            colorFilter = ColorFilter.tint(Color.Black), contentScale = ContentScale.Fit)
+            colorFilter = ColorFilter.tint(tint), contentScale = ContentScale.Fit)
     }
 }

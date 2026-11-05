@@ -44,6 +44,12 @@ android {
         // La clave publica se incluye en el APK; la seguridad depende de RLS.
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.trimEnd('/')}\"")
         buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
+        // Optional FCM transport only; Auth, database and media remain in Supabase.
+        listOf("FIREBASE_APPLICATION_ID", "FIREBASE_API_KEY", "FIREBASE_PROJECT_ID", "FIREBASE_SENDER_ID").forEach { name ->
+            val value = localProperties.getProperty(name, "")
+            require(value.none { it == '"' || it == '\\' || it.isWhitespace() }) { "Invalid $name" }
+            buildConfigField("String", name, "\"$value\"")
+        }
     }
 
     buildTypes {
@@ -64,6 +70,11 @@ android {
 }
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.firebase:firebase-messaging:25.1.3")
+    // Override the obsolete Fragment pulled transitively by Play Services.
+    implementation("androidx.fragment:fragment:1.8.9")
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     // Coroutines para operaciones IO (subida a Supabase, llamadas REST)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

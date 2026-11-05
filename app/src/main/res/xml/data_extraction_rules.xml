@@ -5,6 +5,7 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="sharedpref" path="picgram_push.xml" />
         <exclude domain="sharedpref" path="picgram_session.xml" />
         <exclude domain="sharedpref" path="picgram_cleanup.xml" />
         <!-- TODO: Use <include> and <exclude> to control what is backed up.
@@ -13,6 +14,7 @@
         -->
     </cloud-backup>
     <device-transfer>
+        <exclude domain="sharedpref" path="picgram_push.xml" />
         <exclude domain="sharedpref" path="picgram_session.xml" />
         <exclude domain="sharedpref" path="picgram_cleanup.xml" />
     </device-transfer>

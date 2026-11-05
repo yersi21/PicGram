@@ -8,7 +8,7 @@ import com.example.picgram.data.model.ProfileNames
 
 /** Blocking REST operations. Always call from Dispatchers.IO. */
 object SupabaseDatabase {
-    private fun request(method: String, endpoint: String, token: String,
+    internal fun request(method: String, endpoint: String, token: String,
                         body: JSONObject? = null, prefer: String? = null): String =
         authenticatedRequest(token) { validToken ->
             val connection = (URL("${BuildConfig.SUPABASE_URL}$endpoint").openConnection() as HttpURLConnection).apply {
@@ -33,7 +33,7 @@ object SupabaseDatabase {
         }
 
     /** Explicit paging avoids silently truncating counts at the server row limit. */
-    private fun rows(endpoint: String, token: String): List<JSONObject> {
+    internal fun rows(endpoint: String, token: String): List<JSONObject> {
         val result = mutableListOf<JSONObject>()
         var offset = 0
         while (true) {
@@ -90,7 +90,7 @@ object SupabaseDatabase {
     }
 
     fun updateAvatarUrl(token: String, userId: String, avatarUrl: String) {
-        val result = JSONArray(request("PATCH", "/rest/v1/users?id=eq.$userId", token,
+        val result = JSONArray(request("PATCH", "/rest/v1/users?id=eq.$userId&select=id", token,
             JSONObject().put("avatar_url", avatarUrl), "return=representation"))
         check(result.length() == 1) { "No se pudo actualizar tu perfil. Verifica sus permisos." }
     }
@@ -99,7 +99,7 @@ object SupabaseDatabase {
         val following = getFollowingIds(token, currentUserId)
         if (following.isEmpty()) return emptyList()
         val posts = following.chunked(100).flatMap { ids ->
-            rows("/rest/v1/posts?user_id=in.(${ids.joinToString(",")})&select=*&order=timestamp.desc,id.desc", token).map(::post)
+            rows("/rest/v1/posts?user_id=in.(${ids.joinToString(",")})&select=id,user_id,username,caption,media_url,media_type,timestamp&order=timestamp.desc,id.desc", token).map(::post)
         }.sortedWith(compareByDescending<Post> { it.timestamp }.thenByDescending { it.id })
         if (posts.isEmpty()) return posts
         val likes = posts.map { it.id }.chunked(100).flatMap { ids ->
@@ -108,15 +108,17 @@ object SupabaseDatabase {
         val comments = posts.map { it.id }.chunked(100).flatMap { ids ->
             rows("/rest/v1/comments?post_id=in.(${ids.joinToString(",")})&select=id,post_id&order=id", token)
         }
-        val avatars = posts.map { it.userId }.distinct().chunked(100).flatMap { ids ->
-            rows("/rest/v1/users?id=in.(${ids.joinToString(",")})&select=id,avatar_url&order=id", token)
-        }.associate { it.getString("id") to it.stringOrEmpty("avatar_url") }
+        val authors = posts.map { it.userId }.distinct().chunked(100).flatMap { ids ->
+            rows("/rest/v1/users?id=in.(${ids.joinToString(",")})&select=id,avatar_url,display_name,username&order=id", token)
+        }.associateBy { it.getString("id") }
         val likeCounts = likes.groupingBy { it.getString("post_id") }.eachCount()
         val commentCounts = comments.groupingBy { it.getString("post_id") }.eachCount()
         val likedIds = likes.filter { it.getString("user_id") == currentUserId }.map { it.getString("post_id") }.toSet()
         return posts.map { it.copy(likesCount = likeCounts[it.id] ?: 0,
             commentsCount = commentCounts[it.id] ?: 0, likedByMe = it.id in likedIds,
-            avatarUrl = avatars[it.userId].orEmpty()) }
+            avatarUrl = authors[it.userId]?.stringOrEmpty("avatar_url").orEmpty(),
+            displayName = authors[it.userId]?.stringOrEmpty("display_name").orEmpty(),
+            username = authors[it.userId]?.stringOrEmpty("username") ?: it.username) }
     }
 
     fun insertPost(token: String, userId: String, userEmail: String, username: String,
@@ -136,7 +138,7 @@ object SupabaseDatabase {
     }
 
     fun deletePost(token: String, postId: String) {
-        val deleted = JSONArray(request("DELETE", "/rest/v1/posts?id=eq.$postId", token, prefer = "return=representation"))
+        val deleted = JSONArray(request("DELETE", "/rest/v1/posts?id=eq.$postId&select=id", token, prefer = "return=representation"))
         check(deleted.length() == 1) { "La publicacion no existe o no tienes permiso para borrarla" }
     }
 
@@ -190,8 +192,14 @@ object SupabaseDatabase {
         }
     }
 
+    fun getPost(token: String, postId: String): Post? {
+        java.util.UUID.fromString(postId)
+        return rows("/rest/v1/posts?id=eq.$postId&select=id,user_id,username,caption,media_url,media_type,timestamp&order=id", token)
+            .firstOrNull()?.let(::post)
+    }
+
     fun getUserPosts(token: String, userId: String): List<Post> =
-        rows("/rest/v1/posts?user_id=eq.$userId&select=*&order=timestamp.desc,id.desc", token).map(::post)
+        rows("/rest/v1/posts?user_id=eq.$userId&select=id,user_id,username,caption,media_url,media_type,timestamp&order=timestamp.desc,id.desc", token).map(::post)
 
     private fun getFollowingIds(token: String, userId: String): List<String> =
         rows("/rest/v1/follows?follower_id=eq.$userId&select=following_id&order=following_id", token).map { it.getString("following_id") }
@@ -211,13 +219,13 @@ object SupabaseDatabase {
 
     fun followUser(token: String, followerId: String, followingId: String) {
         require(followerId != followingId) { "No puedes seguirte a ti mismo" }
-        request("POST", "/rest/v1/follows?on_conflict=follower_id,following_id", token,
-            JSONObject().put("follower_id", followerId).put("following_id", followingId),
-            "resolution=ignore-duplicates,return=minimal")
+        request("POST", "/rest/v1/rpc/picgram_follow", token,
+            JSONObject().put("target_id", followingId).put("cancel", false))
     }
 
     fun unfollowUser(token: String, followerId: String, followingId: String) {
-        request("DELETE", "/rest/v1/follows?follower_id=eq.$followerId&following_id=eq.$followingId", token)
+        request("POST", "/rest/v1/rpc/picgram_follow", token,
+            JSONObject().put("target_id", followingId).put("cancel", true))
     }
 
     fun getFollowersCount(token: String, userId: String): Int =

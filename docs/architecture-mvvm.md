@@ -1,5 +1,15 @@
 # Arquitectura MVVM de PicGram
 
+Actualización de comunidad: `CommunityActivity`/`CommunityScreen` y
+`CommunityViewModel` añaden editor de perfil/privacidad, historias, conversaciones,
+chat y bandeja de actividad. `CommunityRepository` contiene sus operaciones;
+`RealtimeSource` emite invalidaciones y el ViewModel recarga datos sujetos a RLS.
+`PrivateMedia` autoriza las descargas de Coil/Media3 y `PushManager` adapta el
+transporte Android. Se conserva la inyección manual. El proyecto ahora tiene
+11 archivos de pantallas y 11 ViewModels concretos, no 10.
+Consultar `community-release.md` y `community-verification.md` para el despliegue
+y los resultados actuales; el resto de este documento describe la migración base.
+
 La app mantiene sus Activities y navegación existentes. La migración separa
 renderizado, estado de pantalla y acceso a datos, sin cambiar el esquema de
 Supabase, los enlaces de recuperación ni los formatos de borradores.

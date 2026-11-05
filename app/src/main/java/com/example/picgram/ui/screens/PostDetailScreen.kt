@@ -103,7 +103,7 @@ fun PostDetailScreen(
                             onClick = { onOpenProfile(post.userId, post.username) })
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            post.username,
+                            post.displayName.ifBlank { post.username },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )

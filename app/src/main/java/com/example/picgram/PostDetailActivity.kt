@@ -40,7 +40,7 @@ class PostDetailActivity : ComponentActivity() {
             PicGramTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     PostDetailScreen(
-                        post = post.copy(avatarUrl = state.authorAvatarUrl),
+                        post = post.copy(avatarUrl = state.authorAvatarUrl, displayName = state.authorName),
                         isOwner = isOwner,
                         currentUserId = session.userId,
                         likesCount = state.likesCount,

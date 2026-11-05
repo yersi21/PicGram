@@ -42,6 +42,9 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import com.example.picgram.data.PrivateMedia
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 
 @Composable
 fun VideoPlayer(url: String, modifier: Modifier = Modifier, playbackEnabled: Boolean = true,
@@ -55,7 +58,10 @@ fun VideoPlayer(url: String, modifier: Modifier = Modifier, playbackEnabled: Boo
     var error by remember(url) { mutableStateOf(false) }
     var fullscreen by rememberSaveable(url) { mutableStateOf(false) }
     var savedPosition by rememberSaveable(url) { mutableLongStateOf(0L) }
-    val player = remember(context, url) { ExoPlayer.Builder(context.applicationContext).build() }
+    val player = remember(context, url) { ExoPlayer.Builder(context.applicationContext)
+        .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(
+            androidx.media3.datasource.DefaultDataSource.Factory(context, OkHttpDataSource.Factory(PrivateMedia.client(context)))))
+        .build() }
     fun newView(): PlayerView = (LayoutInflater.from(context).inflate(R.layout.view_video_player, null) as PlayerView).apply {
         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         setKeepContentOnPlayerReset(true)

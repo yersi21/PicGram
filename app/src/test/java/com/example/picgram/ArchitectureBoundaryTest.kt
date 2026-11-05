@@ -13,7 +13,7 @@ class ArchitectureBoundaryTest {
             File(sources, "ui/screens").listFiles()!!.toList()
         val forbidden = Regex("(SupabaseAuth|SupabaseDatabase|SupabaseStorage|SessionManager|MediaFiles|PostOperations)\\.")
         views.forEach { assertFalse("Data source called by ${it.name}", forbidden.containsMatchIn(it.readText())) }
-        assertEquals(10, File(sources, "ui/screens").listFiles()!!.count { it.extension == "kt" })
+        assertEquals(11, File(sources, "ui/screens").listFiles()!!.count { it.extension == "kt" })
     }
 
     @Test fun viewModelsNeverOwnViewsContextsOrActivityLifecycles() {
@@ -23,6 +23,6 @@ class ArchitectureBoundaryTest {
         models.filterNot { it.name == "ScreenViewModel.kt" }.forEach {
             assertTrue("Missing immutable state in ${it.name}", it.readText().contains("asStateFlow()"))
         }
-        assertEquals(10, models.count { it.name != "ScreenViewModel.kt" })
+        assertEquals(11, models.count { it.name != "ScreenViewModel.kt" })
     }
 }

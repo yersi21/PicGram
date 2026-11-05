@@ -12,7 +12,8 @@ data class Post(
     val likesCount: Int = 0,
     val commentsCount: Int = 0,
     val likedByMe: Boolean = false,
-    val avatarUrl: String = ""
+    val avatarUrl: String = "",
+    val displayName: String = ""
 )
 
 data class Comment(

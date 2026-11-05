@@ -7,7 +7,7 @@ import android.util.Log
 object PostOperations {
     @Synchronized
     fun scheduleCleanup(context: Context, userId: String, path: String) {
-        if (!path.startsWith("posts/$userId/") && !path.startsWith("avatars/$userId/") &&
+        if (!path.startsWith("posts/$userId/") && !path.startsWith("stories/$userId/") && !path.startsWith("avatars/$userId/") &&
             path != "avatars/$userId.jpg") return
         val prefs = context.getSharedPreferences("picgram_cleanup", Context.MODE_PRIVATE)
         val pending = prefs.getStringSet(userId, emptySet()).orEmpty().toMutableSet()

@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import com.example.picgram.data.authenticatedMediaUrl
 
 data class VideoPreview(val bitmap: Bitmap, val aspectRatio: Float)
 data class VideoPreviewState(val preview: VideoPreview? = null, val loading: Boolean = false)
@@ -38,19 +39,26 @@ private object VideoPreviewCache {
     }
 
     suspend fun get(context: Context, url: String): VideoPreview? = withContext(Dispatchers.IO) {
-        cache.get(url)?.let { return@withContext it }
+        val remote = url.startsWith("https://") || url.startsWith("http://")
+        if (!remote) cache.get(url)?.let { return@withContext it }
         permits.withPermit {
-            cache.get(url)?.let { return@withPermit it }
+            if (!remote) cache.get(url)?.let { return@withPermit it }
             val retriever = MediaMetadataRetriever()
             try {
                 val uri = Uri.parse(url)
-                if (uri.scheme in listOf("http", "https")) retriever.setDataSource(url, emptyMap())
+                if (remote) {
+                    val session = SessionManager.currentSession(context)
+                    val headers = if (SupabaseStorage.extractPath(url) != null && session != null)
+                        mapOf("Authorization" to "Bearer ${SessionManager.validAccessToken(session.accessToken)}", "apikey" to BuildConfig.SUPABASE_KEY)
+                        else emptyMap()
+                    retriever.setDataSource(authenticatedMediaUrl(url), headers)
+                }
                 else retriever.setDataSource(context, uri)
                 val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                 val timestamp = if (duration > 0) minOf(1_000L, duration / 2) * 1_000L else 0L
                 val bitmap = retriever.getScaledFrameAtTime(timestamp, MediaMetadataRetriever.OPTION_CLOSEST, 640, 640)
                     ?: return@withPermit null
-                VideoPreview(bitmap, videoAspectRatio(bitmap.width, bitmap.height)).also { cache.put(url, it) }
+                VideoPreview(bitmap, videoAspectRatio(bitmap.width, bitmap.height)).also { if (!remote) cache.put(url, it) }
             } catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
                 null // Playback can still render its own preview if this codec/provider cannot extract a poster.
