@@ -277,7 +277,7 @@ fun ProfileHeader(
                 modifier = Modifier.clickable(enabled = !isLoading, onClickLabel = "Ver seguidos", onClick = onFollowingClicked))
         }
 
-        if (!isOwnProfile) {
+        if (!isOwnProfile) {    
             Spacer(modifier = Modifier.height(16.dp))
             if (isFollowing) {
                 OutlinedButton(onClick = onFollowClicked, enabled = !isTogglingFollow,

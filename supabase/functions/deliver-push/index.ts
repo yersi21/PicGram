@@ -41,7 +41,7 @@ Deno.serve(async request => {
     const body = await request.json();
     const id = body?.record?.id;
     if (id !== undefined && !/^[0-9a-f-]{36}$/.test(id)) return new Response("Invalid event", { status: 400 });
-    const pending = await db("/notifications?push_sent_at=is.null&select=id,user_id,read_at&order=created_at&limit=25" + (id ? `&id=eq.${id}` : ""));
+    const pending = await db("/notifications?push_sent_at=is.null&select=id,user_id,read_at,kind&order=created_at&limit=25" + (id ? `&id=eq.${id}` : ""));
     const bearer = await accessToken(account);
     let delivered = 0;
     for (const n of pending) {
@@ -51,7 +51,7 @@ Deno.serve(async request => {
       if (!n.read_at) for (const device of devices) {
         const response = await fetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
           method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ message: { token: device.token, data: { notification_id: n.id, user_id: n.user_id },
+          body: JSON.stringify({ message: { token: device.token, data: { notification_id: n.id, user_id: n.user_id, kind: n.kind },
             android: { priority: "high", ttl: "86400s" } } }),
         });
         if (!response.ok) {

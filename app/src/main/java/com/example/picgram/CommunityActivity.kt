@@ -42,6 +42,12 @@ class CommunityActivity : ComponentActivity() {
         setContent {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
+            LaunchedEffect(state.storyToOpen) {
+                state.storyToOpen?.let { id ->
+                    startActivity(Intent(this@CommunityActivity, MainActivity::class.java).putExtra("open_story_id", id))
+                    model.consumeStoryNavigation()
+                }
+            }
             LaunchedEffect(state.postToOpen) {
                 state.postToOpen?.let { post ->
                     startActivity(Intent(this@CommunityActivity, PostDetailActivity::class.java).apply {
@@ -68,7 +74,8 @@ class CommunityActivity : ComponentActivity() {
                     onPublish = model::publishStory, onSend = model::sendMessage, onOlder = model::loadOlder,
                     onChat = { id, name -> openCommunity(CommunityPage.CHAT, id, name) },
                     onProfile = { id, name -> openUserProfile(id, name) }, onResolve = model::resolveRequest,
-                    onRead = model::markNotification, onNotificationPost = model::openNotificationPost)
+                    onRead = model::markNotification, onNotificationPost = model::openNotificationPost,
+                    onNotificationStory = model::openNotificationStory)
             }
         }
     }

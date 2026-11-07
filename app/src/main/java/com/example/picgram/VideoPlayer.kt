@@ -48,6 +48,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 
 @Composable
 fun VideoPlayer(url: String, modifier: Modifier = Modifier, playbackEnabled: Boolean = true,
+    autoPlay: Boolean = false, showControls: Boolean = true,
     onDoubleTap: (() -> Unit)? = null) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -119,7 +120,7 @@ fun VideoPlayer(url: String, modifier: Modifier = Modifier, playbackEnabled: Boo
         }
         player.addListener(listener)
         player.setAudioAttributes(AudioAttributes.DEFAULT, true)
-        player.playWhenReady = false
+        player.playWhenReady = autoPlay && currentPlaybackEnabled
         player.setMediaItem(MediaItem.fromUri(url), savedPosition)
         if (currentPlaybackEnabled) player.prepare()
         val lifecycle = (context as? LifecycleOwner)?.lifecycle
@@ -165,7 +166,7 @@ fun VideoPlayer(url: String, modifier: Modifier = Modifier, playbackEnabled: Boo
         val height = videoViewportHeight(maxWidth.value, maxHeight, ratio).dp
         Box(Modifier.fillMaxWidth().height(height).background(Color.Black), contentAlignment = Alignment.Center) {
             AndroidView(factory = { inlineView }, modifier = Modifier.matchParentSize(), update = {
-                it.useController = playbackEnabled
+                it.useController = playbackEnabled && showControls
                 it.setFullscreenButtonState(fullscreen)
                 it.setFullscreenButtonClickListener { _ -> keyboard?.hide(); fullscreen = true }
             })
@@ -188,7 +189,7 @@ fun VideoPlayer(url: String, modifier: Modifier = Modifier, playbackEnabled: Boo
         }
         Box(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding()) {
             AndroidView(factory = { fullView }, modifier = Modifier.fillMaxSize(), update = {
-                it.useController = playbackEnabled
+                it.useController = playbackEnabled && showControls
                 it.setFullscreenButtonState(true)
                 it.setFullscreenButtonClickListener { _ -> fullscreen = false }
             })

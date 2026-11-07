@@ -66,7 +66,11 @@ object PushManager {
         try {
             NotificationManagerCompat.from(context).notify(id.hashCode(), NotificationCompat.Builder(context, "picgram_activity")
                 .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("PicGram")
-                .setContentText("Tienes nueva actividad en tu cuenta").setContentIntent(pending).setAutoCancel(true)
+                .setContentText(when (data["kind"]) {
+                    "story_like" -> "A alguien le gusta tu historia"
+                    "message" -> "Has recibido un mensaje nuevo"
+                    else -> "Tienes nueva actividad en tu cuenta"
+                }).setContentIntent(pending).setAutoCancel(true)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setOnlyAlertOnce(true).build())
         } catch (_: SecurityException) { /* User revoked notifications while delivering. */ }
     }

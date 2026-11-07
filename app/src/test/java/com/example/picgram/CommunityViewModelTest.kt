@@ -189,4 +189,142 @@ class CommunityViewModelTest {
         assertEquals(target, model.uiState.value.postToOpen)
         assertNull(model.uiState.value.error)
     }
+
+    private open class StoryRepository : StubCommunityRepository() {
+        override suspend fun stories(token: String) = listOf(
+            Story("story", "peer", "photo", "image", Long.MAX_VALUE, "ana"),
+            Story("own", "me", "photo", "image", Long.MAX_VALUE),
+            Story("expired", "peer", "photo", "image", 0))
+        override suspend fun conversations(token: String) = emptyList<Conversation>()
+        override suspend fun notifications(token: String, me: String) = emptyList<AppNotification>()
+        override suspend fun requests(token: String, me: String) = emptyList<FollowRequest>()
+    }
+
+    @Test fun storyLikeNotificationOpensOnlyAnAvailableStoryAndMarksItRead() = runTest {
+        val marked = mutableListOf<String>()
+        val model = CommunityViewModel(container(object : StoryRepository() {
+            override suspend fun markNotification(token: String, id: String) { marked += id }
+        }))
+        for (id in listOf("", "deleted", "expired")) {
+            model.openNotificationStory(AppNotification("notice", "peer", "story_like", "", false, storyId = id))
+            advanceUntilIdle()
+            assertNull(model.uiState.value.storyToOpen)
+            assertNotNull(model.uiState.value.error)
+            assertTrue(marked.isEmpty())
+        }
+        model.openNotificationStory(AppNotification("notice", "peer", "story_like", "", false, storyId = "own"))
+        advanceUntilIdle()
+        assertEquals("own", model.uiState.value.storyToOpen)
+        assertEquals(listOf("notice"), marked)
+        assertNull(model.uiState.value.error)
+        model.consumeStoryNavigation()
+        assertNull(model.uiState.value.storyToOpen)
+    }
+
+    @Test fun storyViewsDeduplicateRequestsAndRetryAfterFailure() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        val model = CommunityViewModel(container(object : StoryRepository() {
+            override suspend fun recordStoryView(token: String, storyId: String) {
+                assertEquals("story", storyId)
+                calls++
+                gate.await()
+                if (calls == 1) throw IOException("offline")
+            }
+        }))
+        model.start(CommunityPage.HOME); runCurrent()
+        model.storyOpened("expired")
+        model.storyOpened("story"); model.storyOpened("story"); runCurrent()
+        assertEquals(1, calls)
+        gate.complete(Unit); runCurrent()
+        model.storyOpened("story"); runCurrent()
+        assertEquals(2, calls)
+        model.storyOpened("story"); runCurrent()
+        assertEquals(2, calls)
+        model.stop(); runCurrent()
+    }
+
+    @Test fun onlyOwnStoriesLoadViewersAndFailuresCanBeRetried() = runTest {
+        val viewer = StoryViewer("peer", "ana", "Ana", "photo", "2026-11-07T10:00:00Z")
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        val model = CommunityViewModel(container(object : StoryRepository() {
+            override suspend fun storyViewers(token: String, storyId: String): List<StoryViewer> {
+                assertEquals("own", storyId)
+                calls++
+                gate.await()
+                if (calls == 2) throw IOException("offline")
+                return listOf(viewer)
+            }
+        }))
+        model.start(CommunityPage.HOME); runCurrent()
+        model.loadStoryViewers("story"); model.loadStoryViewers("expired")
+        model.storyOpened("own"); model.loadStoryViewers("own"); runCurrent()
+        assertEquals(1, calls)
+        assertTrue(model.uiState.value.storyViewers.getValue("own").loading)
+        gate.complete(Unit); runCurrent()
+        assertEquals(listOf(viewer), model.uiState.value.storyViewers.getValue("own").viewers)
+        model.loadStoryViewers("own"); runCurrent()
+        assertNotNull(model.uiState.value.storyViewers.getValue("own").error)
+        assertEquals(listOf(viewer), model.uiState.value.storyViewers.getValue("own").viewers)
+        model.loadStoryViewers("own"); runCurrent()
+        assertNull(model.uiState.value.storyViewers.getValue("own").error)
+        assertFalse(model.uiState.value.storyViewers.getValue("own").loading)
+        assertEquals(3, calls)
+        model.stop(); runCurrent()
+    }
+
+    @Test fun storyLikesPreventDuplicatesAndRollbackFailures() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val submitted = mutableListOf<Boolean>()
+        val model = CommunityViewModel(container(object : StoryRepository() {
+            override suspend fun setStoryLike(token: String, storyId: String, userId: String, liked: Boolean) {
+                assertEquals("story", storyId); assertEquals("me", userId)
+                submitted += liked
+                gate.await()
+                if (!liked) throw IOException("offline")
+            }
+        }))
+        model.start(CommunityPage.HOME); runCurrent()
+        model.toggleStoryLike("own"); model.toggleStoryLike("expired")
+        model.toggleStoryLike("story"); model.toggleStoryLike("story"); runCurrent()
+        assertEquals(listOf(true), submitted)
+        assertTrue(model.uiState.value.stories.first().likedByMe)
+        // A stale reload while the write is pending must not undo the optimistic heart.
+        model.refresh(); runCurrent()
+        assertTrue(model.uiState.value.stories.first().likedByMe)
+        gate.complete(Unit); runCurrent()
+        model.toggleStoryLike("story"); runCurrent()
+        assertEquals(listOf(true, false), submitted)
+        assertTrue(model.uiState.value.stories.first().likedByMe)
+        assertTrue(model.uiState.value.pendingStoryLikes.isEmpty())
+        model.stop(); runCurrent()
+    }
+
+    @Test fun storyReplyUsesAuthorAndKeepsSameMessageOnAmbiguousRetry() = runTest {
+        val submitted = mutableListOf<DirectMessage>()
+        val model = CommunityViewModel(container(object : StoryRepository() {
+            override suspend fun sendMessage(token: String, message: DirectMessage) {
+                submitted += message
+                if (submitted.size == 1) throw IOException("ambiguous response")
+            }
+        }))
+        model.start(CommunityPage.HOME); runCurrent()
+        model.editStoryReply("own", "Hola"); model.sendStoryReply("own")
+        model.editStoryReply("expired", "Hola"); model.sendStoryReply("expired")
+        model.editStoryReply("story", " Hola Ana ")
+        model.sendStoryReply("story"); model.sendStoryReply("story"); runCurrent()
+        assertEquals(1, submitted.size)
+        assertEquals("peer", submitted.single().recipientId)
+        assertEquals("me", submitted.single().senderId)
+        assertEquals("Hola Ana", submitted.single().content)
+        assertNotNull(model.uiState.value.storyReplies["story"]?.pending)
+        model.editStoryReply("story", "Changed")
+        model.sendStoryReply("story"); runCurrent()
+        assertEquals(submitted[0], submitted[1])
+        assertEquals("", model.uiState.value.storyReplies["story"]?.draft)
+        assertNull(model.uiState.value.storyReplies["story"]?.pending)
+        assertEquals("Mensaje enviado", model.uiState.value.storyReplies["story"]?.feedback)
+        model.stop(); runCurrent()
+    }
 }

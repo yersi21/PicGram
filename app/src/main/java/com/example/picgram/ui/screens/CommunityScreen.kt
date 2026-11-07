@@ -5,9 +5,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -16,7 +20,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,7 +33,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -48,7 +64,7 @@ fun CommunityScreen(page: CommunityPage, state: CommunityUiState, me: String, us
     onPublish: (Uri?) -> Unit, onSend: (String) -> Unit, onOlder: () -> Unit,
     onChat: (String, String) -> Unit, onProfile: (String, String) -> Unit,
     onResolve: (FollowRequest, Boolean) -> Unit, onRead: (String) -> Unit,
-    onNotificationPost: (AppNotification) -> Unit) {
+    onNotificationPost: (AppNotification) -> Unit, onNotificationStory: (AppNotification) -> Unit) {
     if (page == CommunityPage.CONVERSATIONS) {
         MessagesInbox(state, username, onBack, onRefresh, onNewMessage, onChat,
             onOwnProfile = { onProfile(me, state.profile?.username ?: username) })
@@ -58,6 +74,7 @@ fun CommunityScreen(page: CommunityPage, state: CommunityUiState, me: String, us
         NotificationsInbox(state, pushConfigured, onPushSettings, onBack, onRefresh, onProfile, onResolve,
             onOpen = { notification ->
                 if (notification.kind in listOf("like", "comment")) onNotificationPost(notification)
+                else if (notification.kind == "story_like") onNotificationStory(notification)
                 else {
                     onRead(notification.id)
                     if (notification.kind == "message") onChat(notification.actorId, notification.username)
@@ -178,10 +195,27 @@ private fun StoryComposer(state: CommunityUiState, onPublish: (Uri?) -> Unit, on
 
 @Composable
 fun StoriesStrip(stories: List<Story>, currentUserId: String, currentUsername: String, currentAvatarUrl: String,
+    pendingLikes: Set<String>, replies: Map<String, StoryReplyUiState>,
+    onLike: (String) -> Unit, onReplyChanged: (String, String) -> Unit, onReply: (String) -> Unit,
+    viewers: Map<String, StoryViewersUiState>, onStoryOpened: (String) -> Unit,
+    onLoadViewers: (String) -> Unit, onViewerProfile: (String, String) -> Unit,
+    onChat: (String, String) -> Unit,
+    initialStoryId: String? = null,
     onCreate: () -> Unit) {
     var now by remember { mutableLongStateOf(monotonicMillis()) }
     var selectedUser by remember { mutableStateOf<String?>(null) }
     var storyIndex by remember { mutableIntStateOf(0) }
+    var initialStoryOpened by rememberSaveable(initialStoryId) { mutableStateOf(false) }
+    LaunchedEffect(initialStoryId, stories) {
+        if (!initialStoryOpened && initialStoryId != null) {
+            val target = stories.firstOrNull { it.id == initialStoryId && it.isActive(monotonicMillis()) }
+            if (target != null) {
+                storyIndex = stories.filter { it.userId == target.userId && it.isActive(monotonicMillis()) }.indexOf(target)
+                selectedUser = target.userId
+                initialStoryOpened = true
+            }
+        }
+    }
     LaunchedEffect(Unit) { while (true) { now = monotonicMillis(); delay(1000) } }
     val groups = activeStoryGroups(stories, now)
     val ring = Brush.sweepGradient(listOf(Color(0xFFEA335B), Color(0xFFFFAF45), Color(0xFFB638CF), Color(0xFFEA335B)))
@@ -220,24 +254,172 @@ fun StoriesStrip(stories: List<Story>, currentUserId: String, currentUsername: S
     val selectedStories = groups[selectedUser].orEmpty()
     LaunchedEffect(selectedUser, selectedStories.isEmpty()) { if (selectedStories.isEmpty()) selectedUser = null }
     selectedStories.getOrNull(storyIndex.coerceAtMost(selectedStories.lastIndex))?.let { story ->
+        fun moveStory(backward: Boolean) {
+            val index = storyIndex.coerceAtMost(selectedStories.lastIndex)
+            val next = index + if (backward) -1 else 1
+            if (next in selectedStories.indices) storyIndex = next else selectedUser = null
+        }
+        val currentMoveStory by rememberUpdatedState<(Boolean) -> Unit>(::moveStory)
+        // Key by story, not its refreshed object: live feed updates must not restart the timer.
+        var deadline by rememberSaveable(story.id) { mutableLongStateOf(monotonicMillis() + 10_000L) }
+        var pausedAt by remember(story.id) { mutableStateOf<Long?>(null) }
+        var held by remember(story.id) { mutableStateOf(false) }
+        var showViewers by remember(story.id) { mutableStateOf(false) }
+        fun updatePause(pressing: Boolean = held, showing: Boolean = showViewers) {
+            held = pressing
+            showViewers = showing
+            if (pressing || showing) {
+                if (pausedAt == null) pausedAt = monotonicMillis()
+            } else {
+                pausedAt?.let { deadline += monotonicMillis() - it }
+                pausedAt = null
+            }
+        }
+        var remaining by remember(story.id) { mutableLongStateOf((deadline - monotonicMillis()).coerceAtLeast(0)) }
+        LaunchedEffect(story.id) { onStoryOpened(story.id) }
+        LaunchedEffect(story.id) {
+            while (true) {
+                remaining = (deadline - (pausedAt ?: monotonicMillis())).coerceAtLeast(0)
+                if (remaining == 0L) { selectedUser = null; break }
+                delay(minOf(remaining, 50L))
+            }
+        }
         Dialog(onDismissRequest = { selectedUser = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Surface(Modifier.fillMaxSize().pointerInput(story.id) {
+                // Observe without consuming: likes, replies and video controls keep their gestures.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    updatePause(pressing = true)
+                    try {
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                        } while (event.changes.any { it.pressed })
+                    } finally {
+                        updatePause(pressing = false)
+                    }
+                }
+            }) { Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                val currentIndex = storyIndex.coerceAtMost(selectedStories.lastIndex)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).semantics {
+                    contentDescription = "Historia ${currentIndex + 1} de ${selectedStories.size}"
+                }, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    selectedStories.indices.forEach { index ->
+                        val progress = when {
+                            index < currentIndex -> 1f
+                            index == currentIndex -> (1f - remaining / 10_000f).coerceIn(0f, 1f)
+                            else -> 0f
+                        }
+                        Box(Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))) {
+                            Box(Modifier.fillMaxHeight().fillMaxWidth(progress).background(MaterialTheme.colorScheme.onSurface))
+                        }
+                    }
+                }
                 Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     ProfileAvatar(story.username, story.avatarUrl, Modifier.size(36.dp))
                     Text(story.username, Modifier.weight(1f).padding(12.dp), maxLines = 1)
-                    Text("${storyIndex.coerceAtMost(selectedStories.lastIndex) + 1}/${selectedStories.size}")
                     TextButton(onClick = { selectedUser = null }) { Text("Cerrar") }
                 }
-                if (story.mediaType == "video") Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { VideoPlayer(story.mediaUrl, Modifier.fillMaxWidth()) }
-                else AsyncImage(story.mediaUrl, "Historia de ${story.username}", Modifier.fillMaxWidth().weight(1f), contentScale = ContentScale.Fit)
-                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    TextButton(onClick = { storyIndex = (storyIndex - 1).coerceAtLeast(0) }, enabled = storyIndex > 0) { Text("Anterior") }
-                    TextButton(onClick = {
-                        val index = storyIndex.coerceAtMost(selectedStories.lastIndex)
-                        if (index < selectedStories.lastIndex) storyIndex = index + 1 else selectedUser = null
-                    }) { Text(if (storyIndex < selectedStories.lastIndex) "Siguiente" else "Finalizar") }
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    if (story.mediaType == "video") VideoPlayer(story.mediaUrl, Modifier.fillMaxWidth(),
+                        autoPlay = true, showControls = false)
+                    else AsyncImage(story.mediaUrl, "Historia de ${story.username}", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    // Keep navigation over the media; the reply, like and viewer controls retain their own taps.
+                    Box(Modifier.matchParentSize().semantics {
+                        customActions = listOf(
+                            CustomAccessibilityAction("Historia anterior") { currentMoveStory(true); true },
+                            CustomAccessibilityAction("Historia siguiente") { currentMoveStory(false); true })
+                    }.pointerInput(story.id) {
+                        detectTapGestures(
+                            onLongPress = { /* Holding only pauses the timer; release must not navigate. */ },
+                            onTap = { position -> currentMoveStory(position.x < size.width / 2f) })
+                    })
+                }
+                if (story.userId == currentUserId) {
+                    val viewState = viewers[story.id] ?: StoryViewersUiState()
+                    TextButton(onClick = { updatePause(showing = true); onLoadViewers(story.id) },
+                        modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        Icon(Icons.Default.Visibility, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (viewState.loading) "Cargando vistas…" else if (viewState.error != null) "Ver vistas"
+                            else "Visto por ${viewState.viewers.size}")
+                    }
+                } else {
+                    val reply = replies[story.id] ?: StoryReplyUiState()
+                    val canSend = !reply.sending && (reply.draft.isNotBlank() || reply.pending != null)
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)
+                        .liquidGlass(RoundedCornerShape(26.dp)).padding(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(reply.draft, { onReplyChanged(story.id, it) },
+                            modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                            placeholder = { Text("Enviar mensaje", maxLines = 1, style = MaterialTheme.typography.bodyMedium) },
+                            shape = RoundedCornerShape(28.dp), maxLines = 3,
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            colors = glassTextFieldColors(),
+                            enabled = !reply.sending && reply.pending == null)
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = { onLike(story.id) }, enabled = story.id !in pendingLikes) {
+                            Icon(if (story.likedByMe) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                if (story.likedByMe) "Quitar like de la historia" else "Me gusta la historia",
+                                modifier = Modifier.size(28.dp),
+                                tint = if (story.likedByMe) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = if (story.id in pendingLikes) 0.4f else 1f))
+                        }
+                        IconButton(onClick = { selectedUser = null; onChat(story.userId, story.username) }) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, "Abrir conversación con ${story.username}",
+                                modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        IconButton(onClick = { onReply(story.id) },
+                            modifier = Modifier.liquidGlass(CircleShape, accent = canSend),
+                            colors = IconButtonDefaults.iconButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)),
+                            enabled = canSend) {
+                            if (reply.sending) CircularProgressIndicator(Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
+                            else Icon(Icons.AutoMirrored.Outlined.Send,
+                                if (reply.pending != null) "Reintentar envío" else "Enviar mensaje al autor",
+                                modifier = Modifier.size(28.dp))
+                        }
+                    }
+                    reply.feedback?.let { Text(it, Modifier.padding(top = 8.dp, start = 4.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+                    }
                 }
             } }
+        }
+        if (showViewers && story.userId == currentUserId) {
+            val viewState = viewers[story.id] ?: StoryViewersUiState()
+            Dialog(onDismissRequest = { updatePause(showing = false) }) {
+                Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Visto por ${viewState.viewers.size}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                            TextButton(onClick = { updatePause(showing = false) }) { Text("Cerrar") }
+                        }
+                        if (viewState.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        viewState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        if (!viewState.loading && viewState.error == null && viewState.viewers.isEmpty()) {
+                            Text("Todavía nadie ha visto esta historia", Modifier.padding(vertical = 16.dp))
+                        }
+                        LazyColumn(Modifier.weight(1f, fill = false)) {
+                            items(viewState.viewers, key = { it.userId }) { viewer ->
+                                Row(Modifier.fillMaxWidth().clickable {
+                                    selectedUser = null
+                                    onViewerProfile(viewer.userId, viewer.username)
+                                }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    ProfileAvatar(viewer.username, viewer.avatarUrl, Modifier.size(44.dp))
+                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text(viewer.name.ifBlank { viewer.username }, maxLines = 1)
+                                        Text("@${viewer.username}", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                        TextButton(onClick = { onLoadViewers(story.id) }, enabled = !viewState.loading,
+                            modifier = Modifier.align(Alignment.End)) { Text(if (viewState.error != null) "Reintentar" else "Actualizar") }
+                    }
+                }
+            }
         }
     }
 }

@@ -15,6 +15,9 @@ interface CommunityRepository {
     suspend fun requests(token: String, me: String): List<FollowRequest>
     suspend fun resolveRequest(token: String, requester: String, accept: Boolean)
     suspend fun stories(token: String): List<Story>
+    suspend fun setStoryLike(token: String, storyId: String, userId: String, liked: Boolean)
+    suspend fun recordStoryView(token: String, storyId: String)
+    suspend fun storyViewers(token: String, storyId: String): List<StoryViewer>
     suspend fun createStory(token: String, id: String, me: String, url: String, type: String)
     suspend fun conversations(token: String): List<Conversation>
     suspend fun messages(token: String, peer: String, before: DirectMessage? = null): List<DirectMessage>
@@ -72,8 +75,29 @@ class SupabaseCommunityRepository : CommunityRepository {
         val serverNow = rpc(token, "picgram_server_now").toLong()
         val rows = SupabaseDatabase.rows("/rest/v1/stories?select=*&order=created_at,id", token)
         val users = userRows(token, rows.map { it.getString("user_id") })
+        val liked = SupabaseDatabase.rows("/rest/v1/story_likes?select=story_id&order=story_id", token)
+            .map { it.getString("story_id") }.toSet()
         rows.map { val uid = it.getString("user_id"); Story(it.getString("id"), uid, it.getString("media_url"),
-            it.getString("media_type"), localNow + epochMillis(it.getString("expires_at")) - serverNow, users[uid]?.text("username").orEmpty(), users[uid]?.text("avatar_url").orEmpty()) }
+            it.getString("media_type"), localNow + epochMillis(it.getString("expires_at")) - serverNow, users[uid]?.text("username").orEmpty(), users[uid]?.text("avatar_url").orEmpty(), it.getString("id") in liked) }
+    }
+    override suspend fun setStoryLike(token: String, storyId: String, userId: String, liked: Boolean): Unit = withContext(Dispatchers.IO) {
+        if (liked) SupabaseDatabase.request("POST", "/rest/v1/story_likes?on_conflict=story_id,user_id", token,
+            JSONObject().put("story_id", storyId).put("user_id", userId), "resolution=ignore-duplicates,return=minimal")
+        else SupabaseDatabase.request("DELETE", "/rest/v1/story_likes?story_id=eq.$storyId&user_id=eq.$userId", token)
+        Unit
+    }
+    override suspend fun recordStoryView(token: String, storyId: String): Unit = withContext(Dispatchers.IO) {
+        rpc(token, "picgram_record_story_view", JSONObject().put("target_story", storyId)); Unit
+    }
+    override suspend fun storyViewers(token: String, storyId: String): List<StoryViewer> = withContext(Dispatchers.IO) {
+        val rows = SupabaseDatabase.rows("/rest/v1/story_views?story_id=eq.$storyId&select=viewer_id,viewed_at&order=viewed_at.desc,viewer_id", token)
+        val users = userRows(token, rows.map { it.getString("viewer_id") })
+        rows.map { row ->
+            val id = row.getString("viewer_id")
+            val user = users[id]
+            StoryViewer(id, user?.text("username").orEmpty(), user?.text("display_name").orEmpty(),
+                user?.text("avatar_url").orEmpty(), row.getString("viewed_at"))
+        }
     }
     override suspend fun createStory(token: String, id: String, me: String, url: String, type: String): Unit = withContext(Dispatchers.IO) {
         require(url.isNotBlank() && type in listOf("image", "video"))
@@ -112,11 +136,16 @@ class SupabaseCommunityRepository : CommunityRepository {
             .map { it.text("post_id") }.filter { it.isNotBlank() }.distinct().chunked(100).flatMap { ids ->
                 SupabaseDatabase.rows("/rest/v1/posts?id=in.(${ids.joinToString(",")})&select=id,media_url,media_type&order=id", token)
             }.associateBy { it.getString("id") }
+        val stories = rows.filter { it.text("kind") == "story_like" }.map { it.text("story_id") }
+            .filter { it.isNotBlank() }.distinct().chunked(100).flatMap { ids ->
+                SupabaseDatabase.rows("/rest/v1/stories?id=in.(${ids.joinToString(",")})&select=id,media_url,media_type&order=id", token)
+            }.associateBy { it.getString("id") }
         rows.map { AppNotification(it.getString("id"), it.getString("actor_id"), it.getString("kind"), it.getString("created_at"),
             it.text("read_at").isNotBlank(), it.text("post_id"), users[it.getString("actor_id")]?.text("username").orEmpty(),
             avatarUrl = users[it.getString("actor_id")]?.text("avatar_url").orEmpty(),
-            postMediaUrl = posts[it.text("post_id")]?.text("media_url").orEmpty(),
-            postMediaType = posts[it.text("post_id")]?.text("media_type").orEmpty()) }
+            postMediaUrl = (posts[it.text("post_id")] ?: stories[it.text("story_id")])?.text("media_url").orEmpty(),
+            postMediaType = (posts[it.text("post_id")] ?: stories[it.text("story_id")])?.text("media_type").orEmpty(),
+            storyId = it.text("story_id")) }
     }
     override suspend fun markNotification(token: String, id: String): Unit = withContext(Dispatchers.IO) {
         rpc(token, "picgram_mark_notification", JSONObject().put("notification_id", id)); Unit

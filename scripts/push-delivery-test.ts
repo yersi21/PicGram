@@ -18,7 +18,7 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Pr
   const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
   calls.push({url,method:init?.method ?? "GET",body});
   if (url === "https://oauth2.googleapis.com/token") return Response.json({access_token:"test-access"});
-  if (url.includes("/notifications?push_sent_at")) return Response.json([{id,user_id:"recipient-from-db",read_at:mode === "read" ? "now" : null}]);
+  if (url.includes("/notifications?push_sent_at")) return Response.json([{id,user_id:"recipient-from-db",kind:mode === "message" ? "message" : "story_like",read_at:mode === "read" ? "now" : null}]);
   if (url.includes("/rpc/picgram_claim_push")) return Response.json(mode !== "claimed");
   if (url.includes("/push_devices?user_id=")) return Response.json([{token:"test-device"}]);
   if (url.includes("fcm.googleapis.com")) {
@@ -29,7 +29,7 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Pr
   if (url.includes("/notifications?id=") || url.includes("/push_devices?token=")) return Response.json([]);
   throw new Error("Unexpected HTTP endpoint: " + url);
 };
-function assert(value: unknown, message: string) { if (!value) throw new Error(message); }
+function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 function request(secret = "test-secret", body: unknown = {record:{id,user_id:"forged-user"}}) {
   return new Request("https://test.invalid/function", {method:"POST",headers:{"x-picgram-hook-secret":secret},body:JSON.stringify(body)});
 }
@@ -65,4 +65,15 @@ Deno.test("duplicate claimed events do not send a second push", async () => {
 Deno.test("already read activity is not pushed", async () => {
   reset("read"); await handler(request());
   assert(!calls.some(c => c.url.includes("fcm.googleapis.com")),"read event was pushed");
+});
+Deno.test("story likes and messages send their authoritative kind without private message content", async () => {
+  for (const kind of ["story_like", "message"]) {
+    reset(kind); const response = await handler(request());
+    assert(response.ok,"delivery failed");
+    const send = calls.find(c => c.url.includes("fcm.googleapis.com"));
+    assert(send !== undefined,"FCM request missing");
+    assert(send?.body.message.data.kind === kind,"wrong event kind");
+    assert(Object.keys(send.body.message.data).sort().join(",") === "kind,notification_id,user_id","private content in push");
+    assert(calls.some(c => c.method === "PATCH" && c.body.push_sent_at),"delivery was not acknowledged");
+  }
 });

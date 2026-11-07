@@ -1,5 +1,14 @@
 # Perfiles, privacidad, historias, mensajes y notificaciones
 
+Actualización del visor de historias: cierre a los 10 segundos con pausa al mantener
+presionada la pantalla, likes y respuestas
+por mensaje en [`story-interactions.md`](story-interactions.md). Requiere aplicar
+también `supabase/migrations/009_story_likes.sql` después de 001–008 y
+`supabase/migrations/010_story_views.sql` para la lista «Visto por» del autor y
+`supabase/migrations/011_story_notifications.sql` para los avisos de likes.
+La versión actualizada de `deliver-push` incluye el tipo de actividad en el aviso
+del teléfono; las respuestas desde historias reutilizan el aviso de mensaje.
+
 ## Estado de entrega
 
 Implementación local sobre Supabase Auth/PostgreSQL/Storage y la arquitectura MVVM

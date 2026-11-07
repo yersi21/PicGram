@@ -34,7 +34,11 @@ fun ConnectionsScreen(title: String, username: String, users: List<UserProfile>,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(users, key = { it.id }) { user -> UserResultItem(user) { onUser(user) } }
                 }
+
             }
         }
     }
 }
+
+
+

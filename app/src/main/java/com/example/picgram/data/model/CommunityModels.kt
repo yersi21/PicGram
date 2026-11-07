@@ -15,16 +15,19 @@ data class ProfileDetails(val id: String = "", val username: String = "", val na
     }
 }
 data class Story(val id: String, val userId: String, val mediaUrl: String, val mediaType: String,
-    val expiresAt: Long, val username: String = "", val avatarUrl: String = "") {
+    val expiresAt: Long, val username: String = "", val avatarUrl: String = "", val likedByMe: Boolean = false) {
     fun isActive(now: Long) = now < expiresAt
 }
 data class DirectMessage(val id: String, val senderId: String, val recipientId: String,
     val content: String, val createdAt: String, val readAt: String? = null)
+
+data class StoryViewer(val userId: String, val username: String, val name: String,
+    val avatarUrl: String, val viewedAt: String)
 data class Conversation(val peerId: String, val lastContent: String, val lastAt: String,
     val unread: Int, val username: String = "", val avatarUrl: String = "", val displayName: String = "")
 data class AppNotification(val id: String, val actorId: String, val kind: String,
     val createdAt: String, val read: Boolean, val postId: String = "", val username: String = "",
-    val avatarUrl: String = "", val postMediaUrl: String = "", val postMediaType: String = "")
+    val avatarUrl: String = "", val postMediaUrl: String = "", val postMediaType: String = "", val storyId: String = "")
 data class FollowRequest(val userId: String, val username: String, val avatarUrl: String = "")
 enum class FollowStatus { NONE, REQUESTED, FOLLOWING }
 fun validatedMessage(value: String): String = value.trim().also {

@@ -40,7 +40,10 @@ private fun FeedPreviewContent(dark: Boolean) {
             isDarkMode = dark, onDarkModeChanged = {},
             storiesHeader = { StoriesStrip(listOf(
                 Story("1", "ana", "", "image", monotonicMillis() + 60_000, "ana"),
-                Story("2", "luis", "", "image", monotonicMillis() + 60_000, "luis")), "me", "yo", "", {}) },
+                Story("2", "luis", "", "image", monotonicMillis() + 60_000, "luis")), "me", "yo", "",
+                pendingLikes = emptySet(), replies = emptyMap(), onLike = {}, onReplyChanged = { _, _ -> },
+                onReply = {}, viewers = emptyMap(), onStoryOpened = {}, onLoadViewers = {},
+                onViewerProfile = { _, _ -> }, onChat = { _, _ -> }, onCreate = {}) },
             communityActions = { FeedNavigation(3L, "yo", "", {}, {}, {}, {}) },
             notificationAction = { FeedNotificationAction(2L, {}) },
             posts = listOf(Post(id = "preview", userId = "author", username = "Mariana",

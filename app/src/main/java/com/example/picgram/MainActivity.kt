@@ -62,7 +62,14 @@ class MainActivity : ComponentActivity() {
                     onDarkModeChanged = model::setDarkMode,
                     storiesHeader = {
                         activity.error?.let { Text("Historias y actividad: $it", modifier = androidx.compose.ui.Modifier.padding(8.dp), color = MaterialTheme.colorScheme.error) }
-                        StoriesStrip(activity.stories, session.userId, session.username, state.currentAvatarUrl) { openCommunity(CommunityPage.CREATE_STORY) }
+                        StoriesStrip(activity.stories, session.userId, session.username, state.currentAvatarUrl,
+                            pendingLikes = activity.pendingStoryLikes, replies = activity.storyReplies,
+                            onLike = community::toggleStoryLike, onReplyChanged = community::editStoryReply,
+                            onReply = community::sendStoryReply, viewers = activity.storyViewers,
+                            onStoryOpened = community::storyOpened, onLoadViewers = community::loadStoryViewers,
+                            onViewerProfile = { id, name -> openUserProfile(id, name) },
+                            onChat = { id, name -> openCommunity(CommunityPage.CHAT, id, name) },
+                            initialStoryId = intent.getStringExtra("open_story_id")) { openCommunity(CommunityPage.CREATE_STORY) }
                     },
                     communityActions = {
                         FeedNavigation(

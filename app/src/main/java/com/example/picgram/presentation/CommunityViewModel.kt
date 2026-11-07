@@ -11,6 +11,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
+data class StoryReplyUiState(val draft: String = "", val pending: DirectMessage? = null,
+    val sending: Boolean = false, val feedback: String? = null)
+
+data class StoryViewersUiState(val viewers: List<StoryViewer> = emptyList(),
+    val loading: Boolean = false, val error: String? = null)
+
 data class CommunityUiState(
     val profile: ProfileDetails? = null, val stories: List<Story> = emptyList(),
     val conversations: List<Conversation> = emptyList(), val messages: List<DirectMessage> = emptyList(),
@@ -22,7 +28,11 @@ data class CommunityUiState(
     val hasPendingStory: Boolean = false,
     val postToOpen: Post? = null,
     val chatProfile: ProfileDetails? = null,
-    val sendingMessage: Boolean = false
+    val sendingMessage: Boolean = false,
+    val pendingStoryLikes: Set<String> = emptySet(),
+    val storyReplies: Map<String, StoryReplyUiState> = emptyMap(),
+    val storyViewers: Map<String, StoryViewersUiState> = emptyMap(),
+    val storyToOpen: String? = null
 ) {
     val unreadMessageCount: Long get() = conversations.sumOf { it.unread.coerceAtLeast(0).toLong() }
     val unreadNotificationCount: Long get() = notifications.count { !it.read }.toLong()
@@ -40,6 +50,9 @@ class CommunityViewModel(repositories: AppContainer) : ScreenViewModel(repositor
     private var page = CommunityPage.HOME
     private var peer = ""
     private var pendingStory: Triple<String, String, String>? = null
+    private var storyLikeRevision = 0
+    private val recordedStoryViews = mutableSetOf<String>()
+    private val pendingStoryViews = mutableSetOf<String>()
 
     fun start(page: CommunityPage, peer: String = "") {
         if (active?.isActive == true) return
@@ -89,8 +102,13 @@ class CommunityViewModel(repositories: AppContainer) : ScreenViewModel(repositor
                 }
                 CommunityPage.HOME, CommunityPage.CONVERSATIONS, CommunityPage.NOTIFICATIONS -> {
                     if (page == CommunityPage.HOME) {
+                        val revision = storyLikeRevision
                         val stories = repositories.community.stories(token)
-                        state.update { it.copy(stories = stories) }
+                        state.update { current -> current.copy(stories = stories.map { story ->
+                            if (revision != storyLikeRevision || story.id in current.pendingStoryLikes)
+                                story.copy(likedByMe = current.stories.firstOrNull { it.id == story.id }?.likedByMe ?: story.likedByMe)
+                            else story
+                        }) }
                     }
                     val conversations = repositories.community.conversations(token)
                     val notifications = repositories.community.notifications(token, session.userId)
@@ -202,4 +220,107 @@ class CommunityViewModel(repositories: AppContainer) : ScreenViewModel(repositor
             notifications = it.notifications.map { n -> if (n.id == notification.id) n.copy(read = true) else n }) }
     }
     fun consumePostNavigation() { state.update { it.copy(postToOpen = null) } }
+
+    fun openNotificationStory(notification: AppNotification) = action {
+        val session = repositories.session.currentSession() ?: return@action
+        require(notification.kind == "story_like" && notification.storyId.isNotBlank()) { "Esta historia ya no está disponible" }
+        val story = repositories.community.stories(session.accessToken).firstOrNull { it.id == notification.storyId }
+        require(story != null && story.isActive(monotonicMillis())) { "Esta historia venció o ya no está disponible" }
+        repositories.community.markNotification(session.accessToken, notification.id)
+        state.update { it.copy(storyToOpen = story.id,
+            notifications = it.notifications.map { n -> if (n.id == notification.id) n.copy(read = true) else n }) }
+    }
+    fun consumeStoryNavigation() { state.update { it.copy(storyToOpen = null) } }
+
+    fun storyOpened(storyId: String) {
+        val session = repositories.session.currentSession() ?: return
+        val story = state.value.stories.firstOrNull { it.id == storyId } ?: return
+        if (!story.isActive(monotonicMillis())) return
+        if (story.userId == session.userId) { loadStoryViewers(storyId); return }
+        if (storyId in recordedStoryViews || !pendingStoryViews.add(storyId)) return
+        viewModelScope.launch {
+            try {
+                repositories.community.recordStoryView(session.accessToken, storyId)
+                recordedStoryViews.add(storyId)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (!handleSessionError(error)) notify("No se pudo registrar la vista de la historia. Se reintentará al volver a abrirla.")
+            } finally { pendingStoryViews.remove(storyId) }
+        }
+    }
+
+    fun loadStoryViewers(storyId: String) {
+        val session = repositories.session.currentSession() ?: return
+        val story = state.value.stories.firstOrNull { it.id == storyId } ?: return
+        if (story.userId != session.userId || !story.isActive(monotonicMillis())) return
+        val previous = state.value.storyViewers[storyId] ?: StoryViewersUiState()
+        if (previous.loading) return
+        state.update { it.copy(storyViewers = it.storyViewers + (storyId to previous.copy(loading = true, error = null))) }
+        viewModelScope.launch {
+            try {
+                val viewers = repositories.community.storyViewers(session.accessToken, storyId)
+                state.update { it.copy(storyViewers = it.storyViewers + (storyId to StoryViewersUiState(viewers))) }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                state.update { it.copy(storyViewers = it.storyViewers + (storyId to previous.copy(error = "No se pudieron cargar las vistas"))) }
+                handleSessionError(error)
+            }
+        }
+    }
+
+    fun toggleStoryLike(storyId: String) {
+        val session = repositories.session.currentSession() ?: return
+        val story = state.value.stories.firstOrNull { it.id == storyId } ?: return
+        if (story.userId == session.userId || !story.isActive(monotonicMillis()) || storyId in state.value.pendingStoryLikes) return
+        storyLikeRevision++
+        state.update { it.copy(pendingStoryLikes = it.pendingStoryLikes + storyId,
+            stories = it.stories.map { s -> if (s.id == storyId) s.copy(likedByMe = !story.likedByMe) else s }) }
+        viewModelScope.launch {
+            try {
+                repositories.community.setStoryLike(session.accessToken, storyId, session.userId, !story.likedByMe)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                state.update { it.copy(stories = it.stories.map { s -> if (s.id == storyId) s.copy(likedByMe = story.likedByMe) else s }) }
+                if (!handleSessionError(error)) notify("No se pudo actualizar el like de la historia. Inténtalo de nuevo.")
+            } finally {
+                storyLikeRevision++
+                state.update { it.copy(pendingStoryLikes = it.pendingStoryLikes - storyId) }
+            }
+        }
+    }
+
+    fun editStoryReply(storyId: String, text: String) {
+        val reply = state.value.storyReplies[storyId] ?: StoryReplyUiState()
+        if (reply.sending || reply.pending != null) return
+        state.update { it.copy(storyReplies = it.storyReplies + (storyId to reply.copy(draft = text, feedback = null))) }
+    }
+
+    fun sendStoryReply(storyId: String) {
+        val session = repositories.session.currentSession() ?: return
+        val story = state.value.stories.firstOrNull { it.id == storyId } ?: return
+        val reply = state.value.storyReplies[storyId] ?: return
+        if (reply.sending || story.userId == session.userId || !story.isActive(monotonicMillis())) return
+        val content = try { validatedMessage(reply.draft) } catch (error: IllegalArgumentException) {
+            state.update { it.copy(storyReplies = it.storyReplies + (storyId to reply.copy(feedback = error.message))) }
+            return
+        }
+        val pending = reply.pending ?: DirectMessage(UUID.randomUUID().toString(), session.userId, story.userId, content, "")
+        state.update { it.copy(storyReplies = it.storyReplies + (storyId to reply.copy(pending = pending, sending = true, feedback = null))) }
+        viewModelScope.launch {
+            try {
+                repositories.community.sendMessage(session.accessToken, pending)
+                state.update { it.copy(storyReplies = it.storyReplies + (storyId to StoryReplyUiState(feedback = "Mensaje enviado"))) }
+                notify("Mensaje enviado a ${story.username}")
+                refresh()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                state.update { current ->
+                    val latest = current.storyReplies[storyId] ?: reply
+                    current.copy(storyReplies = current.storyReplies + (storyId to latest.copy(sending = false,
+                        feedback = "No se pudo enviar. Reintenta para enviar el mismo mensaje.")))
+                }
+                handleSessionError(error)
+            }
+        }
+    }
 }

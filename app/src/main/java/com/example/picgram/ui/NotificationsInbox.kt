@@ -111,6 +111,7 @@ private fun NotificationActivityRow(notification: AppNotification, now: Long,
     onProfile: (String, String) -> Unit, onOpen: (AppNotification) -> Unit) {
     val action = when (notification.kind) {
         "like" -> "indicó que le gusta tu publicación."
+        "story_like" -> "indicó que le gusta tu historia."
         "comment" -> "comentó tu publicación."
         "message" -> "te envió un mensaje."
         "request" -> "solicitó seguirte."
@@ -128,11 +129,11 @@ private fun NotificationActivityRow(notification: AppNotification, now: Long,
                 append(notificationRelativeTime(notification.createdAt, now))
             }
         }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        if (notification.postMediaUrl.isNotBlank() && notification.kind in listOf("like", "comment")) {
+        if (notification.postMediaUrl.isNotBlank() && notification.kind in listOf("like", "comment", "story_like")) {
             Box(Modifier.size(width = 48.dp, height = 64.dp).clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)) {
                 if (notification.postMediaType == "video") VideoThumbnail(notification.postMediaUrl, Modifier.fillMaxSize())
-                else AsyncImage(notification.postMediaUrl, "Publicación relacionada", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else AsyncImage(notification.postMediaUrl, if (notification.kind == "story_like") "Historia relacionada" else "Publicación relacionada", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             }
         } else if (notification.kind == "message") {
             Icon(Icons.Outlined.ChatBubbleOutline, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

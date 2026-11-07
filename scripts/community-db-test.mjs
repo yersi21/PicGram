@@ -26,7 +26,8 @@ await db.exec(`
  grant select,insert,update,delete on storage.objects to authenticated;
 `);
 for (const file of ['001_picgram_integrity','002_posts_require_media','003_user_names_search','004_registration_display_name',
-    '005_profiles_privacy','006_stories_messages_notifications','007_private_media','008_push_delivery']) {
+    '005_profiles_privacy','006_stories_messages_notifications','007_private_media','008_push_delivery','009_story_likes',
+    '010_story_views','011_story_notifications']) {
   await db.exec(await readFile(new URL(`../supabase/migrations/${file}.sql`,import.meta.url),'utf8'));
   console.log(`MIGRATED ${file}`);
 }
@@ -71,19 +72,79 @@ await db.exec(`insert into public.stories(user_id,media_url,media_type,created_a
 await check('story server overrides forged dates to 24h', async () => assert.equal(await scalar(`select expires_at = created_at + interval '24 hours' and created_at > '2020-01-01' from public.stories`),true));
 await as(b);
 await check('followed account story visible', async () => assert.equal(await scalar('select count(*) from public.stories'),1));
+const storyId = await scalar('select id from public.stories limit 1');
+await check('follower can record view but cannot read viewer identities', async () => {
+  await db.exec(`select public.picgram_record_story_view('${storyId}'); select public.picgram_record_story_view('${storyId}')`);
+  assert.equal(await scalar('select count(*) from public.story_views'),0);
+});
+await check('follower can like a story idempotently', async () => {
+  await db.exec(`insert into public.story_likes values('${storyId}','${b}') on conflict do nothing;
+    insert into public.story_likes values('${storyId}','${b}') on conflict do nothing`);
+  assert.equal(await scalar('select count(*) from public.story_likes'),1);
+});
+await check('cannot forge a story like for another user', async () =>
+  await denied(`insert into public.story_likes values('${storyId}','${a}')`));
+await check('follower can remove and restore own story like', async () => {
+  await db.exec(`delete from public.story_likes where story_id='${storyId}'`);
+  assert.equal(await scalar('select count(*) from public.story_likes'),0);
+  await db.exec(`insert into public.story_likes values('${storyId}','${b}')`);
+});
 await as(c);
 await check('unfollowed story invisible', async () => assert.equal(await scalar('select count(*) from public.stories'),0));
+await check('nonfollower cannot register views or read the viewer list', async () => {
+  await denied(`select public.picgram_record_story_view('${storyId}')`);
+  assert.equal(await scalar('select count(*) from public.story_views'),0);
+  await denied(`insert into public.story_views(story_id,viewer_id) values('${storyId}','${b}')`);
+});
+await check('nonfollower cannot see or like story reactions', async () => {
+  assert.equal(await scalar('select count(*) from public.story_likes'),0);
+  await denied(`insert into public.story_likes values('${storyId}','${c}')`);
+});
+await as(a);
+await check('story likes notify only the author without duplicating insertion retries', async () => {
+  const rows = (await db.query("select * from public.notifications where kind='story_like'")).rows;
+  assert.equal(rows.length,2); // First like + re-like after removal; duplicate INSERT is ignored.
+  assert.ok(rows.every(row => row.user_id === a && row.actor_id === b && row.story_id === storyId));
+  assert.ok(rows.every(row => row.push_sent_at === null && row.read_at === null));
+});
+await check('author sees one unique viewer and does not count self', async () => {
+  await db.exec(`select public.picgram_record_story_view('${storyId}')`);
+  const rows = (await db.query('select * from public.story_views')).rows;
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].viewer_id,b);
+  assert.equal(await scalar("select viewed_at > now() - interval '1 minute' from public.story_views"),true);
+});
+await check('clients cannot forge view dates or delete viewers', async () => {
+  await denied("update public.story_views set viewed_at='2000-01-01'");
+  await denied('delete from public.story_views');
+});
+await check('author cannot like own story', async () => await denied(`insert into public.story_likes values('${storyId}','${a}')`));
 await root();
 await db.exec(`update public.stories set created_at=now()-interval '25 hours',expires_at=now()-interval '1 hour'`);
+await db.exec('delete from public.story_likes');
 await as(b);
 await check('expired story invisible without scheduler', async () => assert.equal(await scalar('select count(*) from public.stories'),0));
 await check('expired story bytes denied', async () => assert.equal(await scalar(`select public.picgram_can_read_media('stories/${a}/s.jpg')`),false));
+await check('expired story cannot register another view', async () => await denied(`select public.picgram_record_story_view('${storyId}')`));
+await check('expired story cannot be liked', async () => {
+  assert.equal(await scalar('select count(*) from public.story_likes'),0);
+  await denied(`insert into public.story_likes values('${storyId}','${b}')`);
+});
 await db.exec(`insert into public.messages(id,sender_id,recipient_id,content,read_at) values('${p}','${b}','${a}','Mensaje','2100-01-01')`);
+await db.exec(`insert into public.messages(id,sender_id,recipient_id,content) values('${p}','${b}','${a}','Mensaje') on conflict do nothing`);
 await check('sender cannot forge read receipt', async () => assert.equal(await scalar('select read_at is null from public.messages'),true));
 await as(c);
 await check('third party cannot read messages', async () => assert.equal(await scalar('select count(*) from public.messages'),0));
 await check('third party cannot forge sender', async () => await denied(`insert into public.messages(sender_id,recipient_id,content) values('${b}','${a}','fake')`));
 await as(a);
+await check('story replies sent through chat generate one recipient notification and pending push', async () => {
+  const rows = (await db.query("select * from public.notifications where kind='message'")).rows;
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].user_id,a);
+  assert.equal(rows[0].actor_id,b);
+  assert.equal(rows[0].message_id,p);
+  assert.equal(rows[0].push_sent_at,null);
+});
 await check('conversation unread count', async () => assert.equal(Number(await scalar('select unread from public.picgram_conversations()')),1));
 await check('message history is visible to recipient', async () => assert.equal((await db.query(`select * from public.picgram_messages('${b}')`)).rows.length,1));
 await db.exec(`select public.picgram_mark_messages('${b}',now())`);
@@ -132,6 +193,15 @@ await check('message RPC cannot expose someone else conversation', async () => a
 await as('');
 await check('missing authenticated identity grants no profile access', async () => assert.equal(await scalar('select count(*) from public.users'),0));
 await root();
+await check('deleting a story cascades to its viewers', async () => {
+  await db.exec(`delete from public.stories where id='${storyId}'`);
+  assert.equal(await scalar('select count(*) from public.story_views'),0);
+});
+await check('deleted stories leave safe notification history without a dangling story link', async () => {
+  const rows = (await db.query("select story_id from public.notifications where kind='story_like'")).rows;
+  assert.equal(rows.length,2);
+  assert.ok(rows.every(row => row.story_id === null));
+});
 await check('media bucket is not public', async () => assert.equal(await scalar(`select public from storage.buckets where id='picgram-posts'`),false));
 await db.close();
 console.log(`${passed} PostgreSQL security / integration checks passed`);
