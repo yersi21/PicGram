@@ -28,6 +28,7 @@ data class CommunityUiState(
     val hasPendingStory: Boolean = false,
     val postToOpen: Post? = null,
     val chatProfile: ProfileDetails? = null,
+    val peerPresence: UserPresence? = null,
     val sendingMessage: Boolean = false,
     val pendingStoryLikes: Set<String> = emptySet(),
     val storyReplies: Map<String, StoryReplyUiState> = emptyMap(),
@@ -60,6 +61,18 @@ class CommunityViewModel(repositories: AppContainer) : ScreenViewModel(repositor
         refresh()
         active = viewModelScope.launch {
             if (page in listOf(CommunityPage.EDIT_PROFILE, CommunityPage.CREATE_STORY)) return@launch
+            if (page == CommunityPage.CHAT) launch {
+                while (isActive) {
+                    val session = repositories.session.currentSession() ?: break
+                    val presence = try { repositories.community.presence(session.accessToken, peer) }
+                    catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        null
+                    }
+                    state.update { it.copy(peerPresence = presence) }
+                    delay(10_000)
+                }
+            }
             launch { while (isActive) { delay(30_000); refresh() } }
             while (isActive) {
                 val session = repositories.session.currentSession() ?: break

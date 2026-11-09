@@ -35,7 +35,11 @@ object AndroidEmailValidator : EmailValidator {
 class PicGramApplication : Application(), coil.ImageLoaderFactory {
     val container by lazy { AppContainer(this) }
     override fun newImageLoader() = PrivateMedia.imageLoader(this)
-    override fun onCreate() { super.onCreate(); PushManager.initialize(this) }
+    override fun onCreate() {
+        super.onCreate()
+        PushManager.initialize(this)
+        registerActivityLifecycleCallbacks(PresenceTracker(this))
+    }
 }
 
 interface SessionRepository {

@@ -30,6 +30,7 @@ data class AppNotification(val id: String, val actorId: String, val kind: String
     val avatarUrl: String = "", val postMediaUrl: String = "", val postMediaType: String = "", val storyId: String = "")
 data class FollowRequest(val userId: String, val username: String, val avatarUrl: String = "")
 enum class FollowStatus { NONE, REQUESTED, FOLLOWING }
+data class UserPresence(val online: Boolean, val lastSeenAgeMillis: Long?, val fetchedAt: Long = monotonicMillis())
 fun validatedMessage(value: String): String = value.trim().also {
     require(it.length in 1..4000) { "El mensaje debe tener entre 1 y 4000 caracteres" }
 }

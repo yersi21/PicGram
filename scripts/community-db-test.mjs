@@ -27,7 +27,7 @@ await db.exec(`
 `);
 for (const file of ['001_picgram_integrity','002_posts_require_media','003_user_names_search','004_registration_display_name',
     '005_profiles_privacy','006_stories_messages_notifications','007_private_media','008_push_delivery','009_story_likes',
-    '010_story_views','011_story_notifications']) {
+    '010_story_views','011_story_notifications','012_user_presence']) {
   await db.exec(await readFile(new URL(`../supabase/migrations/${file}.sql`,import.meta.url),'utf8'));
   console.log(`MIGRATED ${file}`);
 }
@@ -203,5 +203,31 @@ await check('deleted stories leave safe notification history without a dangling 
   assert.ok(rows.every(row => row.story_id === null));
 });
 await check('media bucket is not public', async () => assert.equal(await scalar(`select public from storage.buckets where id='picgram-posts'`),false));
+const device1 = '90000000-0000-0000-0000-000000000001';
+const device2 = '90000000-0000-0000-0000-000000000002';
+await as(a);
+await db.exec(`select public.picgram_touch_presence('${device1}',true)`);
+await as(b);
+await check('peer can see online status without reading presence devices', async () => {
+  assert.equal(await scalar(`select online from public.picgram_presence('${a}')`),true);
+  await denied('select * from public.user_presence');
+});
+await as(a);
+await db.exec(`select public.picgram_touch_presence('${device2}',true); select public.picgram_touch_presence('${device1}',false)`);
+await check('one device disconnecting does not hide another online device', async () =>
+  assert.equal(await scalar(`select online from public.picgram_presence('${a}')`),true));
+await db.exec(`select public.picgram_touch_presence('${device2}',false)`);
+await check('disconnect preserves last seen timestamp', async () => {
+  const row = (await db.query(`select * from public.picgram_presence('${a}')`)).rows[0];
+  assert.equal(row.online,false); assert.ok(row.last_seen_at);
+});
+await root();
+await db.exec(`update public.user_presence set active=true,last_seen_at=now()-interval '61 seconds' where user_id='${a}'`);
+await as(b);
+await check('stale online leases expire after connection loss', async () =>
+  assert.equal(await scalar(`select online from public.picgram_presence('${a}')`),false));
+await as('');
+await check('missing identity cannot publish online status', async () =>
+  await denied(`select public.picgram_touch_presence('${device1}',true)`));
 await db.close();
 console.log(`${passed} PostgreSQL security / integration checks passed`);

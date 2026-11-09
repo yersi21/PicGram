@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.example.picgram.ui.presenceLabel
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -96,8 +98,11 @@ fun CommunityScreen(page: CommunityPage, state: CommunityUiState, me: String, us
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.clickable(enabled = profile != null) { profile?.let { onProfile(it.id, it.username) } }) {
                 ProfileAvatar(profile?.username ?: username, profile?.avatarUrl.orEmpty(), Modifier.size(40.dp))
-                Text(profile?.let { it.name.ifBlank { it.username.ifBlank { title } } } ?: title,
-                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Column {
+                    Text(profile?.let { it.name.ifBlank { it.username.ifBlank { title } } } ?: title,
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    ChatPresence(state.peerPresence)
+                }
             }
         } else Text(title)
     }, navigationIcon = {
@@ -148,13 +153,30 @@ private fun ProfileEditor(profile: ProfileDetails, state: CommunityUiState, onSa
 }
 
 @Composable
+private fun ChatPresence(presence: UserPresence?) {
+    var now by remember { mutableLongStateOf(monotonicMillis()) }
+    LaunchedEffect(Unit) { while (true) { now = monotonicMillis(); delay(15_000) } }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(8.dp).background(
+            if (presence?.online == true) Color(0xFF2EBD59) else MaterialTheme.colorScheme.outline, CircleShape))
+        Text(presenceLabel(presence, now), style = MaterialTheme.typography.labelSmall,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
 private fun ColumnScope.ChatPanel(state: CommunityUiState, me: String, onSend: (String) -> Unit, onOlder: () -> Unit) {
     var draft by rememberSaveable { mutableStateOf("") }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(15_000) } }
     LaunchedEffect(state.messageSent) { if (state.messageSent > 0) draft = "" }
-    Text(if (state.connected) "En tiempo real" else "Reconectando…", Modifier.padding(8.dp))
-    LazyColumn(Modifier.fillMaxWidth().weight(1f), reverseLayout = true) {
+    val listState = rememberLazyListState()
+    // Key by newest message, so loading older history and receipt updates do not move the list.
+    LaunchedEffect(state.messages.lastOrNull()?.id, state.pendingMessage?.id) {
+        if (state.messages.isNotEmpty() || state.pendingMessage != null) listState.scrollToItem(0)
+    }
+    if (!state.connected) Text("Reconectando mensajes…", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
+    LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState, reverseLayout = true) {
         state.pendingMessage?.takeIf { pending -> state.messages.none { it.id == pending.id } }?.let { pending ->
             item(key = "pending:${pending.id}") {
                 ChatMessageBubble(pending, me, state.chatProfile, now,

@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 interface CommunityRepository {
+    suspend fun presence(token: String, peer: String): UserPresence? = null
     suspend fun profile(token: String, userId: String, own: Boolean): ProfileDetails
     suspend fun saveProfile(token: String, profile: ProfileDetails)
     suspend fun followStatus(token: String, me: String, target: String): FollowStatus
@@ -30,6 +31,12 @@ interface CommunityRepository {
 }
 
 class SupabaseCommunityRepository : CommunityRepository {
+    override suspend fun presence(token: String, peer: String): UserPresence? = withContext(Dispatchers.IO) {
+        val row = JSONArray(rpc(token, "picgram_presence", JSONObject().put("peer", peer))).optJSONObject(0)
+            ?: return@withContext null
+        UserPresence(row.getBoolean("online"), if (row.isNull("last_seen_at")) null else
+            (epochMillis(row.getString("server_now")) - epochMillis(row.getString("last_seen_at"))).coerceAtLeast(0))
+    }
     private fun JSONObject.text(key: String) = if (isNull(key)) "" else optString(key, "")
     private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
     private fun rpc(token: String, name: String, body: JSONObject = JSONObject()) =
