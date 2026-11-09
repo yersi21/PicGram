@@ -1,0 +1,6 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Monochrome lens/P mark: Android tints notification small icons using their alpha. -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M11,2C5,2 1,6.5 1,12.5C1,18.5 5.5,23 11.5,23C16.5,23 19,19.5 19,15.5C19,12 23,12 23,7.5C23,4.5 20.5,2.5 18,2.5C14.5,2.5 12,5.5 12,9V17C12,20 9,21 6.5,19C3,16.5 3,10 6,7C7.5,5.5 9,5 11,5zM15,9C15,6.5 16.5,5.5 18,5.5C19.5,5.5 20,6.5 20,7.5C20,9.5 17,10 15,12zM8,9a4,4 0,1 0,0 8a4,4 0,1 0,0 -8zM8,11a2,2 0,1 1,0 4a2,2 0,1 1,0 -4zM11,0h2v2h-2zM15,0h1v1h-1z" />
+</vector>

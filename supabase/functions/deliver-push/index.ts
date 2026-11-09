@@ -41,17 +41,29 @@ Deno.serve(async request => {
     const body = await request.json();
     const id = body?.record?.id;
     if (id !== undefined && !/^[0-9a-f-]{36}$/.test(id)) return new Response("Invalid event", { status: 400 });
-    const pending = await db("/notifications?push_sent_at=is.null&select=id,user_id,read_at,kind&order=created_at&limit=25" + (id ? `&id=eq.${id}` : ""));
+    const pending = await db("/notifications?push_sent_at=is.null&select=id,user_id,actor_id,message_id,read_at,kind&order=created_at&limit=25" + (id ? `&id=eq.${id}` : ""));
     const bearer = await accessToken(account);
     let delivered = 0;
     for (const n of pending) {
       if (!await db("/rpc/picgram_claim_push", "POST", { notification_id: n.id })) continue;
       const devices = await db(`/push_devices?user_id=eq.${n.user_id}&select=token`);
+      // Resolve the actor and the exact message from trusted rows, never from the webhook body.
+      const [actors, messages] = await Promise.all([
+        db(`/users?id=eq.${n.actor_id}&select=display_name,username&limit=1`),
+        n.kind === "message" && n.message_id
+          ? db(`/messages?id=eq.${n.message_id}&sender_id=eq.${n.actor_id}&recipient_id=eq.${n.user_id}&select=content&limit=1`)
+          : Promise.resolve([]),
+      ]);
+      const actor = actors[0];
+      const actorName = actor?.display_name?.trim() || actor?.username?.trim() || "Alguien";
+      // Keep the entire FCM payload comfortably below its 4096-byte limit, including emoji.
+      const preview = Array.from(messages[0]?.content?.trim() || "").slice(0, 500).join("");
       let success = true;
       if (!n.read_at) for (const device of devices) {
         const response = await fetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
           method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ message: { token: device.token, data: { notification_id: n.id, user_id: n.user_id, kind: n.kind },
+          body: JSON.stringify({ message: { token: device.token, data: { notification_id: n.id, user_id: n.user_id, kind: n.kind,
+            actor_id: n.actor_id, actor_name: actorName, message_preview: preview },
             android: { priority: "high", ttl: "86400s" } } }),
         });
         if (!response.ok) {
