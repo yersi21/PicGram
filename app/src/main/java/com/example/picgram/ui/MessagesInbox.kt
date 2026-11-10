@@ -65,18 +65,6 @@ fun MessagesInbox(state: CommunityUiState, username: String, onBack: () -> Unit,
             actions = { IconButton(onClick = onNewMessage) { Icon(Icons.Outlined.Edit, "Nuevo mensaje") } },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background)
         )
-    }, bottomBar = {
-        Row(Modifier.fillMaxWidth().background(background).navigationBarsPadding().padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Outlined.Home, "Volver al inicio") }
-            Box(Modifier.size(width = 64.dp, height = 44.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                .semantics { contentDescription = "Mensajes, sección actual" }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.ChatBubbleOutline, null)
-            }
-            IconButton(onClick = onOwnProfile, modifier = Modifier.semantics { contentDescription = "Mi perfil" }) {
-                ProfileAvatar(account, state.profile?.avatarUrl.orEmpty(), Modifier.size(30.dp))
-            }
-        }
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), contentPadding = PaddingValues(bottom = 24.dp)) {
             item(key = "search") {

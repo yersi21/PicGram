@@ -64,18 +64,20 @@ class CommunityActivity : ComponentActivity() {
                 }
             }
             PicGramTheme {
-                CommunityScreen(page, state, session.userId,
-                    if (page == CommunityPage.CONVERSATIONS) session.username else intent.getStringExtra("username").orEmpty(),
-                    onNewMessage = { startActivity(Intent(this, SearchActivity::class.java).putExtra("select_message_recipient", true)) },
-                    pushConfigured = PushManager.configured,
-                    onPushSettings = { startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)) },
-                    onBack = { finish() }, onRefresh = model::refresh, onSave = model::saveProfile,
-                    onPhoto = { avatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    onPublish = model::publishStory, onSend = model::sendMessage, onOlder = model::loadOlder,
-                    onChat = { id, name -> openCommunity(CommunityPage.CHAT, id, name) },
-                    onProfile = { id, name -> openUserProfile(id, name) }, onResolve = model::resolveRequest,
-                    onRead = model::markNotification, onNotificationPost = model::openNotificationPost,
-                    onNotificationStory = model::openNotificationStory)
+                AppNavigationShell(avatarUrl = state.profile?.avatarUrl.orEmpty(), unreadMessages = state.unreadMessageCount) {
+                    CommunityScreen(page, state, session.userId,
+                        if (page == CommunityPage.CONVERSATIONS) session.username else intent.getStringExtra("username").orEmpty(),
+                        onNewMessage = { startActivity(Intent(this, SearchActivity::class.java).putExtra("select_message_recipient", true)) },
+                        pushConfigured = PushManager.configured,
+                        onPushSettings = { startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)) },
+                        onBack = { finish() }, onRefresh = model::refresh, onSave = model::saveProfile,
+                        onPhoto = { avatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        onPublish = model::publishStory, onSend = model::sendMessage, onOlder = model::loadOlder,
+                        onChat = { id, name -> openCommunity(CommunityPage.CHAT, id, name) },
+                        onProfile = { id, name -> openUserProfile(id, name) }, onResolve = model::resolveRequest,
+                        onRead = model::markNotification, onNotificationPost = model::openNotificationPost,
+                        onNotificationStory = model::openNotificationStory)
+                }
             }
         }
     }

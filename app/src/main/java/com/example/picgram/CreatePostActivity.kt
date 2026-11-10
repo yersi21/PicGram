@@ -35,26 +35,28 @@ class CreatePostActivity : ComponentActivity() {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    CreatePostScreen(
-                        selectedMediaUri = state.selectedMediaUri,
-                        isLoading = state.isLoading,
-                        loadingMessage = state.loadingMessage,
-                        hasPendingPost = state.pendingPost != null,
-                        initialCaption = state.pendingPost?.caption ?: state.restoredCaption,
-                        previewUrl = state.pendingPost?.mediaUrl?.takeIf { it.isNotBlank() } ?: state.selectedMediaUri?.toString().orEmpty(),
-                        previewType = state.pendingPost?.mediaType ?: state.mediaType,
-                        onSelectMediaClicked = {
-                            pickMediaLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
-                            )
-                        },
-                        onSubmitPost = { caption -> model.startUpload(caption) },
-                        onBackClicked = { finish() }
-                    )
+                AppNavigationShell {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        CreatePostScreen(
+                            selectedMediaUri = state.selectedMediaUri,
+                            isLoading = state.isLoading,
+                            loadingMessage = state.loadingMessage,
+                            hasPendingPost = state.pendingPost != null,
+                            initialCaption = state.pendingPost?.caption ?: state.restoredCaption,
+                            previewUrl = state.pendingPost?.mediaUrl?.takeIf { it.isNotBlank() } ?: state.selectedMediaUri?.toString().orEmpty(),
+                            previewType = state.pendingPost?.mediaType ?: state.mediaType,
+                            onSelectMediaClicked = {
+                                pickMediaLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                )
+                            },
+                            onSubmitPost = { caption -> model.startUpload(caption) },
+                            onBackClicked = { finish() }
+                        )
+                    }
                 }
             }
         }

@@ -30,14 +30,16 @@ class SearchActivity : ComponentActivity() {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
-                SearchScreen(if (selectRecipient) state.copy(results = state.results.filter { it.id != ownId }) else state,
-                    onQueryChange = model::search, onBackClicked = { finish() },
-                    onUserClicked = {
-                        if (selectRecipient) {
-                            openCommunity(CommunityPage.CHAT, it.id, it.username)
-                            finish()
-                        } else openUserProfile(it.id, it.username)
-                    })
+                AppNavigationShell {
+                    SearchScreen(if (selectRecipient) state.copy(results = state.results.filter { it.id != ownId }) else state,
+                        onQueryChange = model::search, onBackClicked = { finish() },
+                        onUserClicked = {
+                            if (selectRecipient) {
+                                openCommunity(CommunityPage.CHAT, it.id, it.username)
+                                finish()
+                            } else openUserProfile(it.id, it.username)
+                        })
+                }
             }
         }
     }

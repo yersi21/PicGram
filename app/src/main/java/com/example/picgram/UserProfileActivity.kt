@@ -36,51 +36,53 @@ class UserProfileActivity : ComponentActivity() {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    UserProfileScreen(
-                        bio = state.bio,
-                        isPrivate = state.isPrivate,
-                        followRequested = state.followRequested,
-                        onEditProfile = { openCommunity(com.example.picgram.presentation.CommunityPage.EDIT_PROFILE) },
-                        onMessage = { openCommunity(com.example.picgram.presentation.CommunityPage.CHAT, profileUserId, username) },
-                        displayName = state.displayName,
-                        username          = username,
-                        posts             = state.posts,
-                        isLoading         = state.isLoading,
-                        isOwnProfile      = state.isOwnProfile,
-                        isFollowing       = state.isFollowing,
-                        isTogglingFollow  = state.isTogglingFollow,
-                        followersCount    = state.followersCount,
-                        followingCount    = state.followingCount,
-                        avatarUrl         = state.avatarUrl,
-                        isUploadingAvatar = state.isUploadingAvatar || state.isRemovingAvatar || state.isAvatarLoading,
-                        onBackClicked     = { finish() },
-                        onFollowClicked   = {
-                            model.handleFollowToggle(session.accessToken, session.userId, profileUserId)
-                        },
-                        onAvatarClicked   = {
-                            if (state.isOwnProfile && !state.isUploadingAvatar && !state.isRemovingAvatar && !state.isAvatarLoading) {
-                                pickAvatarLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                AppNavigationShell(avatarUrl = if (state.isOwnProfile) state.avatarUrl else "") {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        UserProfileScreen(
+                            bio = state.bio,
+                            isPrivate = state.isPrivate,
+                            followRequested = state.followRequested,
+                            onEditProfile = { openCommunity(com.example.picgram.presentation.CommunityPage.EDIT_PROFILE) },
+                            onMessage = { openCommunity(com.example.picgram.presentation.CommunityPage.CHAT, profileUserId, username) },
+                            displayName = state.displayName,
+                            username          = username,
+                            posts             = state.posts,
+                            isLoading         = state.isLoading,
+                            isOwnProfile      = state.isOwnProfile,
+                            isFollowing       = state.isFollowing,
+                            isTogglingFollow  = state.isTogglingFollow,
+                            followersCount    = state.followersCount,
+                            followingCount    = state.followingCount,
+                            avatarUrl         = state.avatarUrl,
+                            isUploadingAvatar = state.isUploadingAvatar || state.isRemovingAvatar || state.isAvatarLoading,
+                            onBackClicked     = { finish() },
+                            onFollowClicked   = {
+                                model.handleFollowToggle(session.accessToken, session.userId, profileUserId)
+                            },
+                            onAvatarClicked   = {
+                                if (state.isOwnProfile && !state.isUploadingAvatar && !state.isRemovingAvatar && !state.isAvatarLoading) {
+                                    pickAvatarLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                }
+                            },
+                            onDeleteAvatar = model::handleAvatarDelete,
+                            onFollowersClicked = { openConnections(profileUserId, username, ConnectionType.FOLLOWERS) },
+                            onFollowingClicked = { openConnections(profileUserId, username, ConnectionType.FOLLOWING) },
+                            onPostClicked     = { post ->
+                                startActivity(Intent(this, PostDetailActivity::class.java).apply {
+                                    putExtra("post_id",        post.id)
+                                    putExtra("post_user_id",   post.userId)
+                                    putExtra("post_username",  post.username)
+                                    putExtra("post_caption",   post.caption)
+                                    putExtra("post_media_url", post.mediaUrl)
+                                    putExtra("post_media_type",post.mediaType)
+                                    putExtra("post_timestamp", post.timestamp)
+                                    putExtra("post_avatar_url", state.avatarUrl)
+                                })
                             }
-                        },
-                        onDeleteAvatar = model::handleAvatarDelete,
-                        onFollowersClicked = { openConnections(profileUserId, username, ConnectionType.FOLLOWERS) },
-                        onFollowingClicked = { openConnections(profileUserId, username, ConnectionType.FOLLOWING) },
-                        onPostClicked     = { post ->
-                            startActivity(Intent(this, PostDetailActivity::class.java).apply {
-                                putExtra("post_id",        post.id)
-                                putExtra("post_user_id",   post.userId)
-                                putExtra("post_username",  post.username)
-                                putExtra("post_caption",   post.caption)
-                                putExtra("post_media_url", post.mediaUrl)
-                                putExtra("post_media_type",post.mediaType)
-                                putExtra("post_timestamp", post.timestamp)
-                                putExtra("post_avatar_url", state.avatarUrl)
-                            })
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }

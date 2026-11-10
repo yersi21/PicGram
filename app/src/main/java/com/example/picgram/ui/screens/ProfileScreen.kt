@@ -13,7 +13,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -56,6 +60,9 @@ fun UserProfileScreen(
     onFollowingClicked: () -> Unit,
     onPostClicked: (Post) -> Unit
 ) {
+    var showVideos by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val visiblePosts = if (showVideos) posts.filter { it.mediaType == "video" } else posts
+    val context = LocalContext.current
     var showAvatarOptions by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showDeleteAvatar by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var photoToView by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
@@ -96,18 +103,11 @@ fun UserProfileScreen(
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             modifier = Modifier.fillMaxSize().padding(innerPadding),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             item(span = { GridItemSpan(3) }) {
                 Column {
-                if (bio.isNotBlank()) Text(bio, modifier = Modifier.padding(16.dp))
-                if (isPrivate) Text("Cuenta privada", modifier = Modifier.padding(horizontal = 16.dp))
-                if (isOwnProfile) {
-                    TextButton(onClick = onEditProfile) { Text("Editar perfil y privacidad") }
-                } else {
-                    TextButton(onClick = onMessage) { Text("Enviar mensaje") }
-                }
                 ProfileHeader(
                     followRequested = followRequested,
                     displayName = displayName,
@@ -129,20 +129,37 @@ fun UserProfileScreen(
                     onFollowersClicked = onFollowersClicked,
                     onFollowingClicked = onFollowingClicked
                 )
+                if (bio.isNotBlank()) Text(bio, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                if (isPrivate) Text("Cuenta privada", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (isOwnProfile) {
+                        FilledTonalButton(onClick = onEditProfile, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) { Text("Editar perfil") }
+                        FilledTonalButton(onClick = {
+                            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "Mira mi perfil en PicGram: @$username")
+                            }, "Compartir perfil"))
+                        }, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) { Text("Compartir perfil") }
+                    } else {
+                        FilledTonalButton(onClick = onMessage, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) { Text("Enviar mensaje") }
+                    }
+                }
+
                 }
             }
 
             item(span = { GridItemSpan(3) }) {
                 Column {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.GridView, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(20.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        listOf(false, true).forEach { videos ->
+                            Column(Modifier.weight(1f).clickable { showVideos = videos }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(if (videos) Icons.Outlined.VideoLibrary else Icons.Default.GridView,
+                                    contentDescription = if (videos) "Videos" else "Publicaciones",
+                                    tint = if (showVideos == videos) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(14.dp).size(24.dp))
+                                HorizontalDivider(thickness = 2.dp, color = if (showVideos == videos) MaterialTheme.colorScheme.onSurface else Color.Transparent)
+                            }
+                        }
                     }
-                    HorizontalDivider()
                 }
             }
 
@@ -155,11 +172,11 @@ fun UserProfileScreen(
                 }
             }
 
-            if (!isLoading && posts.isEmpty()) {
+            if (!isLoading && visiblePosts.isEmpty()) {
                 item(span = { GridItemSpan(3) }) {
                     Box(modifier = Modifier.fillMaxWidth().padding(48.dp),
                         contentAlignment = Alignment.Center) {
-                        Text(if (isPrivate && !isOwnProfile && !isFollowing) "Sigue esta cuenta para ver sus publicaciones" else "Sin publicaciones aun",
+                        Text(if (isPrivate && !isOwnProfile && !isFollowing) "Sigue esta cuenta para ver sus publicaciones" else if (showVideos) "Sin videos" else "Sin publicaciones aun",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center)
@@ -167,7 +184,7 @@ fun UserProfileScreen(
                 }
             }
 
-            items(posts, key = { it.id }) { post ->
+            items(visiblePosts, key = { it.id }) { post ->
                 PostThumbnail(post = post, onClick = { onPostClicked(post) })
             }
         }
@@ -193,12 +210,8 @@ fun ProfileHeader(
     onFollowersClicked: () -> Unit,
     onFollowingClicked: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
-            .liquidGlass().padding(horizontal = 24.dp, vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // ── Avatar circular ─────────────────────────────────────────────────
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         Box(
             modifier = Modifier
                 .size(90.dp)
@@ -243,40 +256,16 @@ fun ProfileHeader(
             }
         }
 
-        // Label "Agregar/Cambiar foto" — solo perfil propio
-        if (isOwnProfile) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable(enabled = !isUploadingAvatar) { onAvatarClicked() }
-            ) {
-                Icon(Icons.Default.AddAPhoto, contentDescription = null,
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = if (avatarUrl.isBlank()) "Agregar foto" else "Opciones de foto",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+        Column(Modifier.weight(1f)) {
+            Text(displayName.ifBlank { username }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                StatItem(if (isLoading) "�" else "$postCount", "publicaciones")
+                StatItem(if (isLoading) "�" else "$followersCount", "seguidores", Modifier.clickable(enabled = !isLoading, onClick = onFollowersClicked))
+                StatItem(if (isLoading) "�" else "$followingCount", "seguidos", Modifier.clickable(enabled = !isLoading, onClick = onFollowingClicked))
             }
         }
-
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(displayName.ifBlank { username }, style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-        Text("@$username", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            StatItem(count = if (isLoading) "..." else "$postCount",      label = "publicaciones")
-            StatItem(count = if (isLoading) "..." else "$followersCount", label = "seguidores",
-                modifier = Modifier.clickable(enabled = !isLoading, onClickLabel = "Ver seguidores", onClick = onFollowersClicked))
-            StatItem(count = if (isLoading) "..." else "$followingCount", label = "siguiendo",
-                modifier = Modifier.clickable(enabled = !isLoading, onClickLabel = "Ver seguidos", onClick = onFollowingClicked))
         }
-
         if (!isOwnProfile) {    
             Spacer(modifier = Modifier.height(16.dp))
             if (isFollowing) {
@@ -306,7 +295,7 @@ fun ProfileHeader(
 @Composable
 fun StatItem(count: String, label: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(count, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(count, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(label, style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -316,7 +305,7 @@ fun StatItem(count: String, label: String, modifier: Modifier = Modifier) {
 fun PostThumbnail(post: Post, onClick: () -> Unit) {
     Box(
         modifier = Modifier.aspectRatio(1f).clickable { onClick() }
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {

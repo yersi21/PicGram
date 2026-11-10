@@ -38,29 +38,31 @@ class PostDetailActivity : ComponentActivity() {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    PostDetailScreen(
-                        post = post.copy(avatarUrl = state.authorAvatarUrl, displayName = state.authorName),
-                        isOwner = isOwner,
-                        currentUserId = session.userId,
-                        likesCount = state.likesCount,
-                        likedByMe = state.likedByMe,
-                        comments = state.comments,
-                        isLoadingDetail = state.isLoadingDetail,
-                        isDeleting = state.isDeleting,
-                        commentText = state.commentText,
-                        isSubmittingComment = state.isSubmittingComment,
-                        hasPendingComment = state.pendingComment != null,
-                        scrollToBottom = state.scrollToBottom,
-                        onCommentTextChange = model::editComment,
-                        onBackClicked = { finish() },
-                        onLikeClicked = { model.handleLike(session.accessToken, postId, session.userId) },
-                        onDoubleTapLike = { model.handleLike(session.accessToken, postId, session.userId, addOnly = true) },
-                        onDeletePost = { model.handleDeletePost(session, post) },
-                        onSendComment = { model.handleAddComment(session, postId) },
-                        onOpenProfile = { userId, username -> openUserProfile(userId, username) },
-                        onDeleteComment = { comment -> model.handleDeleteComment(session.accessToken, comment) }
-                    )
+                AppNavigationShell {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        PostDetailScreen(
+                            post = post.copy(avatarUrl = state.authorAvatarUrl, displayName = state.authorName),
+                            isOwner = isOwner,
+                            currentUserId = session.userId,
+                            likesCount = state.likesCount,
+                            likedByMe = state.likedByMe,
+                            comments = state.comments,
+                            isLoadingDetail = state.isLoadingDetail,
+                            isDeleting = state.isDeleting,
+                            commentText = state.commentText,
+                            isSubmittingComment = state.isSubmittingComment,
+                            hasPendingComment = state.pendingComment != null,
+                            scrollToBottom = state.scrollToBottom,
+                            onCommentTextChange = model::editComment,
+                            onBackClicked = { finish() },
+                            onLikeClicked = { model.handleLike(session.accessToken, postId, session.userId) },
+                            onDoubleTapLike = { model.handleLike(session.accessToken, postId, session.userId, addOnly = true) },
+                            onDeletePost = { model.handleDeletePost(session, post) },
+                            onSendComment = { model.handleAddComment(session, postId) },
+                            onOpenProfile = { userId, username -> openUserProfile(userId, username) },
+                            onDeleteComment = { comment -> model.handleDeleteComment(session.accessToken, comment) }
+                        )
+                    }
                 }
             }
         }

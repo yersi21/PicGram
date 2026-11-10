@@ -8,6 +8,9 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.foundation.border
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,7 +32,8 @@ import com.example.picgram.ui.theme.LocalGlassDark
 
 @Composable
 fun FeedNavigation(unreadMessages: Long, username: String, avatarUrl: String,
-    onHome: () -> Unit, onMessages: () -> Unit, onSearch: () -> Unit, onProfile: () -> Unit) {
+    onHome: () -> Unit, onMessages: () -> Unit, onSearch: () -> Unit, onProfile: () -> Unit,
+    selectedSection: String = "home") {
     Row(
         modifier = Modifier.fillMaxWidth()
             .background(if (LocalGlassDark.current) Color(0xFF0D1015) else Color(0xFFFAFAFC))
@@ -47,10 +51,13 @@ fun FeedNavigation(unreadMessages: Long, username: String, avatarUrl: String,
                 0L -> "No hay mensajes sin leer"
                 1L -> "1 mensaje sin leer"
                 else -> "$unreadMessages mensajes sin leer"
-            }, onMessages)
-        IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Buscar usuarios", Modifier.size(28.dp)) }
-        IconButton(onClick = onProfile) {
-            ProfileAvatar(username, avatarUrl, Modifier.size(30.dp))
+            }, onMessages, selectedSection == "messages")
+        IconButton(onClick = onSearch, modifier = Modifier.background(if (selectedSection == "search") MaterialTheme.colorScheme.surfaceVariant else Color.Transparent, CircleShape).semantics { selected = selectedSection == "search" }) { Icon(Icons.Outlined.Search, "Buscar usuarios", Modifier.size(28.dp)) }
+        IconButton(onClick = onProfile, modifier = Modifier.semantics {
+            contentDescription = "Mi perfil"; selected = selectedSection == "profile"
+        }) {
+            ProfileAvatar(username, avatarUrl, Modifier.size(30.dp).then(
+                if (selectedSection == "profile") Modifier.border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape).padding(3.dp) else Modifier))
         }
     }
 }
@@ -67,13 +74,13 @@ fun FeedNotificationAction(unreadNotifications: Long, onNotifications: () -> Uni
 
 @Composable
 private fun UnreadNavigationIcon(icon: ImageVector, label: String, unreadCount: Long,
-    description: String, onClick: () -> Unit) {
+    description: String, onClick: () -> Unit, isSelected: Boolean = false) {
     val text = unreadCount.coerceAtLeast(0).toString()
     // A square badge with CircleShape stays circular even for multi-digit counts.
     val badgeDiameter = maxOf(20f, (text.length * 7f + 8f) * LocalDensity.current.fontScale).dp
     val buttonSize = maxOf(56.dp, badgeDiameter + 20.dp)
     Box(Modifier.size(buttonSize)) {
-        IconButton(onClick = onClick, modifier = Modifier.fillMaxSize().semantics { stateDescription = description }) {
+        IconButton(onClick = onClick, modifier = Modifier.fillMaxSize().background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent, CircleShape).semantics { stateDescription = description; selected = isSelected }) {
             Icon(icon, contentDescription = label, modifier = Modifier.size(26.dp),
                 tint = MaterialTheme.colorScheme.onSurface)
         }

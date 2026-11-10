@@ -38,8 +38,10 @@ class ConnectionsActivity : ComponentActivity() {
             ObserveNotices(model)
             val state by model.uiState.collectAsStateWithLifecycle()
             PicGramTheme {
-                ConnectionsScreen(type.title, intent.getStringExtra("username").orEmpty(), state.users, state.loading, state.error,
-                    onBack = { finish() }, onRetry = model::reload, onUser = { openUserProfile(it.id, it.username) })
+                AppNavigationShell {
+                    ConnectionsScreen(type.title, intent.getStringExtra("username").orEmpty(), state.users, state.loading, state.error,
+                        onBack = { finish() }, onRetry = model::reload, onUser = { openUserProfile(it.id, it.username) })
+                }
             }
         }
     }
